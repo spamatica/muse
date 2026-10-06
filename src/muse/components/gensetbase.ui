@@ -2271,6 +2271,65 @@ Second names: Flats (Db, Eb, Gb etc.), or the flat scale (C, Db, D, Eb, E etc.),
                  </widget>
                 </item>
                 <item>
+                 <layout class="QHBoxLayout" name="recordOggVorbisLayout">
+                  <item>
+                   <widget class="QCheckBox" name="recordOggVorbisCheckBox">
+                    <property name="toolTip">
+                     <string>Record wave tracks to Ogg/Vorbis files instead of
+32 bit float wave files. Uses far less disk space,
+at some loss of quality.
+Recorded audio can not be edited in place in the wave editor,
+and loop recording keeps only the first pass.</string>
+                    </property>
+                    <property name="text">
+                     <string>Record to Ogg/Vorbis (compressed)</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QLabel" name="recordOggVorbisQualityLabel">
+                    <property name="text">
+                     <string>Quality</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QDoubleSpinBox" name="recordOggVorbisQualitySpinBox">
+                    <property name="toolTip">
+                     <string>Ogg/Vorbis encoding quality.
+0.0 = smallest files, 1.0 = best quality.
+0.4 is roughly 128 kbit/s for stereo.</string>
+                    </property>
+                    <property name="decimals">
+                     <number>2</number>
+                    </property>
+                    <property name="minimum">
+                     <double>0.000000000000000</double>
+                    </property>
+                    <property name="maximum">
+                     <double>1.000000000000000</double>
+                    </property>
+                    <property name="singleStep">
+                     <double>0.100000000000000</double>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <spacer name="recordOggVorbisSpacer">
+                    <property name="orientation">
+                     <enum>Qt::Horizontal</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size>
+                      <width>0</width>
+                      <height>0</height>
+                     </size>
+                    </property>
+                   </spacer>
+                  </item>
+                 </layout>
+                </item>
+                <item>
                  <widget class="QCheckBox" name="momentaryMuteCheckBox">
                   <property name="toolTip">
                    <string>Whether record-arming a track

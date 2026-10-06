@@ -179,6 +179,10 @@ SndFile::SndFile(
       refCount = 0;
       writeBuffer = nullptr;
       writeSegSize = std::max((size_t)_segSize, (size_t)cacheMag);// cache minimum segment size for write operations
+      _writeOnly = false;
+      _writePos = 0;
+      _logicalWritePos = 0;
+      _discardWarned = false;
       
       _staticAudioConverter    = nullptr;
       _staticAudioConverterUI  = nullptr;
@@ -216,6 +220,10 @@ SndFile::SndFile(
       refCount = 0;
       writeBuffer = nullptr;
       writeSegSize = std::max((size_t)_segSize, (size_t)cacheMag);// cache minimum segment size for write operations
+      _writeOnly = false;
+      _writePos = 0;
+      _logicalWritePos = 0;
+      _discardWarned = false;
       
       _staticAudioConverter    = nullptr;
       _staticAudioConverterUI  = nullptr;
@@ -254,6 +262,25 @@ SndFile::~SndFile()
 int SndFile::getRefCount() const   { return refCount; }
 bool SndFile::isOpen() const       { return openFlag; }
 bool SndFile::isWritable() const   { return writeFlag; }
+
+bool SndFile::formatSupportsReadWrite(int format)
+      {
+      switch (format & SF_FORMAT_TYPEMASK) {
+            case SF_FORMAT_OGG:
+            case SF_FORMAT_FLAC:
+                  return false;
+            default:
+                  return true;
+            }
+      }
+
+bool SndFile::setEncodingQuality(double quality)
+      {
+      if (!sf || !_writeOnly)
+            return true;
+      // libsndfile returns SF_TRUE on success.
+      return sf_command(sf, SFC_SET_VBR_ENCODING_QUALITY, &quality, sizeof(quality)) != SF_TRUE;
+      }
 bool SndFile::useConverter() const { return _useConverter; }
 AudioConverterSettingsGroup* SndFile::audioConverterSettings() const { return _audioConverterSettings; }
 StretchList* SndFile::stretchList() const { return _stretchList; }
@@ -935,13 +962,32 @@ bool SndFile::openWrite()
             return false;
             }
 
+      _writeOnly = false;
+      _writePos = 0;
+      _logicalWritePos = 0;
+      _discardWarned = false;
+
       // File based:
       if(finfo)
       {
         const QString p = path();
         if(p.isEmpty())
           return true;
-        sf = sf_open(p.toLocal8Bit().constData(), SFM_RDWR, &sfinfo);
+        if(formatSupportsReadWrite(sfinfo.format))
+          sf = sf_open(p.toLocal8Bit().constData(), SFM_RDWR, &sfinfo);
+        else
+        {
+          // Write-only mode truncates the file. Only allow it for new (or empty) files,
+          //  so that for example in-place wave editing cannot wipe an existing file.
+          if(QFile::exists(p) && QFileInfo(p).size() > 0)
+          {
+            ERROR_WAVE(stderr, "SndFile::openWrite: %s: format cannot be modified in place\n",
+                       p.toLocal8Bit().constData());
+            return true;
+          }
+          sf = sf_open(p.toLocal8Bit().constData(), SFM_WRITE, &sfinfo);
+          _writeOnly = (sf != nullptr);
+        }
       }
       // Memory based:
       else
@@ -997,6 +1043,7 @@ void SndFile::close()
               sfUI = nullptr;
       }
       openFlag = false;
+      _writeOnly = false;
       
       if(_staticAudioConverter)
       {
@@ -1171,6 +1218,8 @@ sf_count_t SndFile::samples() const
       {
       if (!finfo || !writeFlag) // if file is read only sfinfo is reliable
           return sfinfo.frames;
+      if (_writeOnly) // can't seek, but we know how much was written
+          return _writePos;
       SNDFILE* sfPtr = sf;
       if (sfUI)
         sfPtr = sfUI;
@@ -1318,8 +1367,33 @@ size_t SndFile::write(int srcChannels, float** src, size_t n, bool liveWaveUpdat
 {
    size_t wrFrames = 0;
 
-   if(n <= writeSegSize)
+   if(_writeOnly)
+   {
+      // Apply any seek done since the previous write.
+      if(_logicalWritePos > _writePos)
+      {
+         // Forward: fill the gap with silence.
+         writeSilence(_logicalWritePos - _writePos, liveWaveUpdate);
+      }
+      else if(_logicalWritePos < _writePos)
+      {
+         // Backward: can't overwrite, so drop frames until we are past what is already written.
+         const sf_count_t behind = _writePos - _logicalWritePos;
+         wrFrames = behind < (sf_count_t)n ? behind : n;
+         if(!_discardWarned)
+         {
+            ERROR_WAVE(stderr, "SndFile::write: %s: cannot overwrite already written audio in this format, discarding\n",
+                       path().toLocal8Bit().constData());
+            _discardWarned = true;
+         }
+      }
+      _logicalWritePos += n;
+   }
+
+   if(wrFrames == 0 && n <= writeSegSize)
        wrFrames = realWrite(srcChannels, src, n, wrFrames, liveWaveUpdate);
+   else if(wrFrames >= n)
+       return wrFrames;
    else
    {
       while(1)
@@ -1336,6 +1410,31 @@ size_t SndFile::write(int srcChannels, float** src, size_t n, bool liveWaveUpdat
    return wrFrames;
 }
 
+//---------------------------------------------------------
+//   writeSilence
+//    Used in write-only mode to emulate a forward seek.
+//---------------------------------------------------------
+
+size_t SndFile::writeSilence(size_t n, bool liveWaveUpdate)
+{
+   const int channels = sfinfo.channels;
+   std::vector<float> zeros(writeSegSize, 0.0f);
+   float* src[channels];
+   for (int ch = 0; ch < channels; ++ch)
+      src[ch] = zeros.data();
+
+   size_t wrFrames = 0;
+   while(wrFrames < n)
+   {
+      size_t sz = (n - wrFrames) < writeSegSize ? (n - wrFrames) : writeSegSize;
+      size_t nrWrote = realWrite(channels, src, sz, 0, liveWaveUpdate);
+      if(nrWrote == 0) // Nothing written?
+        break;
+      wrFrames += nrWrote;
+   }
+   return wrFrames;
+}
+
 size_t SndFile::realWrite(int srcChannels, float** src, size_t n, size_t offs, bool liveWaveUpdate)
 {
    int dstChannels = sfinfo.channels;
@@ -1345,6 +1444,9 @@ size_t SndFile::realWrite(int srcChannels, float** src, size_t n, size_t offs, b
    size_t iEnd = offs + n;
 
    const float limitValue=0.9999;
+
+   if(!sf || !writeBuffer)
+     return 0;
 
    for (int ch = 0; ch < srcChannels; ++ch)
      if(!src[ch])
@@ -1388,6 +1490,8 @@ size_t SndFile::realWrite(int srcChannels, float** src, size_t n, size_t offs, b
       return 0;
    }
    int nbr = sf_writef_float(sf, writeBuffer, n) ;
+   if(_writeOnly && nbr > 0)
+      _writePos += nbr;
 
    if(liveWaveUpdate)
    { //update cache
@@ -1440,6 +1544,21 @@ size_t SndFile::realWrite(int srcChannels, float** src, size_t n, size_t offs, b
 
 sf_count_t SndFile::seek(sf_count_t frames, int whence)
       {
+      if (_writeOnly) {
+            // Seeking while writing is not supported by the format (and a failed
+            //  seek corrupts the stream). Just remember the position, write() applies it.
+            if (whence & SFM_READ)
+                  return -1;
+            switch (whence & ~SFM_WRITE) {
+                  case SEEK_SET: _logicalWritePos = frames; break;
+                  case SEEK_CUR: _logicalWritePos += frames; break;
+                  case SEEK_END: _logicalWritePos = _writePos + frames; break;
+                  default: return -1;
+                  }
+            if (_logicalWritePos < 0)
+                  _logicalWritePos = 0;
+            return _logicalWritePos;
+            }
       return sf_seek(sf, frames, whence);
       }
 
@@ -1448,6 +1567,8 @@ sf_count_t SndFile::seekUI(sf_count_t frames, int whence)
   sf_count_t rn = 0;
   if(sfUI)
     rn = sf_seek(sfUI, frames, whence);
+  else if(_writeOnly) // Can't read from a write-only file.
+    rn = -1;
   else if(sf)
     rn = sf_seek(sf, frames, whence);
   return rn;
@@ -1460,6 +1581,8 @@ sf_count_t SndFile::seekUI(sf_count_t frames, int whence)
 
 sf_count_t SndFile::seekUIConverted(sf_count_t frames, int whence, sf_count_t offset)
 {
+  if(!sfUI && _writeOnly) // Can't read from a write-only file.
+    return -1;
   const sf_count_t smps = samples();
   sf_count_t rn = 0;
   sf_count_t pos = offset + convertPosition(frames);
@@ -1493,6 +1616,8 @@ sf_count_t SndFile::seekUIConverted(sf_count_t frames, int whence, sf_count_t of
 
 sf_count_t SndFile::seekConverted(sf_count_t frames, int whence, int offset)
       {
+      if (_writeOnly)
+            return seek(frames + offset, whence);
       if(useConverter() && _staticAudioConverter && _staticAudioConverter->isValid() &&
          (((sampleRateDiffers() || isResampled()) && (_staticAudioConverter->capabilities() & AudioConverter::SampleRate)) ||
           (isStretched() && (_staticAudioConverter->capabilities() & AudioConverter::Stretch))) )

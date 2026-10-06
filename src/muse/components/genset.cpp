@@ -481,6 +481,8 @@ void GlobalSettingsConfig::updateSettings()
       preferKnobsVsSlidersCheckBox->setChecked(MusEGlobal::config.preferKnobsVsSliders);
       showControlValuesCheckBox->setChecked(MusEGlobal::config.showControlValues);
       monitorOnRecordCheckBox->setChecked(MusEGlobal::config.monitorOnRecord);
+      recordOggVorbisCheckBox->setChecked(MusEGlobal::config.recordOggVorbis);
+      recordOggVorbisQualitySpinBox->setValue(MusEGlobal::config.recordOggVorbisQuality);
       momentaryMuteCheckBox->setChecked(MusEGlobal::config.momentaryMute);
       momentarySoloCheckBox->setChecked(MusEGlobal::config.momentarySolo);
       lineEditStyleHackCheckBox->setChecked(MusEGlobal::config.lineEditStyleHack);
@@ -648,6 +650,8 @@ void GlobalSettingsConfig::apply()
       MusEGlobal::config.preferKnobsVsSliders = preferKnobsVsSlidersCheckBox->isChecked();
       MusEGlobal::config.showControlValues = showControlValuesCheckBox->isChecked();
       MusEGlobal::config.monitorOnRecord = monitorOnRecordCheckBox->isChecked();
+      MusEGlobal::config.recordOggVorbis = recordOggVorbisCheckBox->isChecked();
+      MusEGlobal::config.recordOggVorbisQuality = recordOggVorbisQualitySpinBox->value();
       MusEGlobal::config.momentaryMute = momentaryMuteCheckBox->isChecked();
       MusEGlobal::config.momentarySolo = momentarySoloCheckBox->isChecked();
       MusEGlobal::config.lineEditStyleHack = lineEditStyleHackCheckBox->isChecked();

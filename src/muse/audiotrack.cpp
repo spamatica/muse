@@ -3107,16 +3107,20 @@ bool AudioTrack::prepareRecording()
                                   QObject::tr("TRACK") +
                                   QString("_%1_").arg(name().simplified().replace(" ","_")) +
                                   QObject::tr("TAKE");
+            // Ogg/Vorbis saves a lot of disk space, at some loss of quality.
+            // Only for wave track takes (including bounce to track), not for output tracks.
+            const bool useOgg = MusEGlobal::config.recordOggVorbis && type() == Track::WAVE;
+            const QString ext = useOgg ? QString("ogg") : QString("wav");
             QFile fil;
             for (;;++recFileNumber) {
-               fil.setFileName(fbase + QString("_%1.wav").arg(recFileNumber));
+               fil.setFileName(fbase + QString("_%1.%2").arg(recFileNumber).arg(ext));
                if (!fil.exists())
                   break;
                   }
             _recFile = new MusECore::SndFile(fil.fileName());
 
             _recFile->setFormat(
-               SF_FORMAT_WAV | SF_FORMAT_FLOAT,
+               useOgg ? (SF_FORMAT_OGG | SF_FORMAT_VORBIS) : (SF_FORMAT_WAV | SF_FORMAT_FLOAT),
                _channels, MusEGlobal::sampleRate);
       }
 
@@ -3130,6 +3134,11 @@ bool AudioTrack::prepareRecording()
             return false;
 
             }
+
+      if(_recFile->isWriteOnly() &&
+         _recFile->setEncodingQuality(MusEGlobal::config.recordOggVorbisQuality))
+            fprintf(stderr, "AudioTrack::prepareRecording: could not set encoding quality for %s\n",
+                    _recFile->path().toLocal8Bit().constData());
 
       // For bounce operations: Reset these.
       _recFilePos = 0;

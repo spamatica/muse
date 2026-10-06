@@ -804,6 +804,10 @@ void readConfiguration(Xml& xml, bool doReadMidiPortConfig, bool doReadGlobalCon
                               MusEGlobal::config.scrollableSubMenus = xml.parseInt();
                         else if (tag == "liveWaveUpdate")
                               MusEGlobal::config.liveWaveUpdate = xml.parseInt();
+                        else if (tag == "recordOggVorbis")
+                              MusEGlobal::config.recordOggVorbis = xml.parseInt();
+                        else if (tag == "recordOggVorbisQuality")
+                              MusEGlobal::config.recordOggVorbisQuality = xml.parseDouble();
                         else if (tag == "audioEffectsRackVisibleItems")
                               MusEGlobal::config.audioEffectsRackVisibleItems = xml.parseInt();
                         else if (tag == "preferKnobsVsSliders")
@@ -2139,6 +2143,8 @@ void MusE::writeGlobalConfiguration(int level, MusECore::Xml& xml) const
       xml.intTag(level, "trackHeight",  MusEGlobal::config.trackHeight);
       xml.intTag(level, "scrollableSubMenus", MusEGlobal::config.scrollableSubMenus);
       xml.intTag(level, "liveWaveUpdate", MusEGlobal::config.liveWaveUpdate);
+      xml.intTag(level, "recordOggVorbis", MusEGlobal::config.recordOggVorbis);
+      xml.doubleTag(level, "recordOggVorbisQuality", MusEGlobal::config.recordOggVorbisQuality);
       xml.intTag(level, "audioEffectsRackVisibleItems", MusEGlobal::config.audioEffectsRackVisibleItems);
       xml.intTag(level, "preferKnobsVsSliders", MusEGlobal::config.preferKnobsVsSliders);
       xml.intTag(level, "showControlValues", MusEGlobal::config.showControlValues);

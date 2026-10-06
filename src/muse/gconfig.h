@@ -456,6 +456,9 @@ struct GlobalConfigValues {
       bool audioAutomationShowBoxes;
       bool audioAutomationOptimize;
       int audioAutomationPointRadius;
+
+      bool recordOggVorbis;          // Record audio tracks to Ogg/Vorbis instead of float wave files.
+      double recordOggVorbisQuality; // Ogg/Vorbis encoding quality, 0.0 (smallest) - 1.0 (best).
       };
 
 

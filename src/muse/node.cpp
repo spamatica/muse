@@ -1994,7 +1994,8 @@ void AudioTrack::record()
                         // Reference counting diagnostics.
                         // fprintf(stderr, "AudioTrack::record _recFile ref count:%d\n", _recFile.getRefCount());
 
-                        // FIXME If we are to support writing compressed file types, we probably shouldn't be seeking here. REMOVE Tim. Wave.
+                        // For compressed (write-only) file types such as Ogg/Vorbis, SndFile emulates
+                        //  this seek: gaps are filled with silence, overlaps (loop recording) are dropped.
                         _recFile->seek(pos, 0);
                         _recFile->write(_channels, buffer, MusEGlobal::segmentSize, MusEGlobal::config.liveWaveUpdate);
                       }

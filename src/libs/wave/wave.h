@@ -106,6 +106,15 @@ class SndFile {
 
       bool openFlag;
       bool writeFlag;
+      // Write-only (streaming) mode, for formats such as Ogg/Vorbis which
+      //  libsndfile cannot open read/write and cannot seek while writing.
+      // Seeks are then emulated: a forward seek pads with silence on the
+      //  next write, a backward seek discards frames until caught up.
+      bool _writeOnly;
+      sf_count_t _writePos;        // Frames actually written to the file.
+      sf_count_t _logicalWritePos; // Where the caller wants the next write to land.
+      bool _discardWarned;
+      size_t writeSilence(size_t n, bool liveWaveUpdate);
       size_t readInternal(int srcChannels, float** dst, size_t n, bool overwrite, float *buffer);
       size_t realWrite(int srcChannels, float** src, size_t n, size_t offs = 0, bool liveWaveUpdate = false);
       
@@ -183,6 +192,15 @@ class SndFile {
       bool isOpen() const;
       // Whether the file was opened with write mode.
       bool isWritable() const;
+      // Whether the file was opened in write-only (streaming) mode.
+      bool isWriteOnly() const { return _writeOnly; }
+      // Whether libsndfile can open the given format read/write (and seek while writing).
+      // Compressed formats like Ogg/Vorbis and FLAC can only be written front to back.
+      static bool formatSupportsReadWrite(int format);
+      // Set the encoding quality (0.0 lowest - 1.0 highest) of a compressed format.
+      // Must be called after openWrite() and before the first write.
+      //!< returns true on error
+      bool setEncodingQuality(double quality);
 
       void update(bool showProgress = true);
 

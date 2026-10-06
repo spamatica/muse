@@ -433,7 +433,9 @@ GlobalConfigValues config = {
       true,                         // audioAutomationDrawDiscrete
       true,                         // audioAutomationShowBoxes
       true,                         // audioAutomationOptimize
-      2                             // audioAutomationPointRadius
+      2,                            // audioAutomationPointRadius
+      false,                        // recordOggVorbis
+      0.4                           // recordOggVorbisQuality
 };
 
 } // namespace MusEGlobal

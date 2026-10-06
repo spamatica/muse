@@ -2863,6 +2863,22 @@ void WaveCanvas::modifySelection(int operation, unsigned startpos, unsigned stop
         //
         
         MusECore::WaveSelectionList selection = getSelection(startpos, stoppos);
+
+        // Compressed files (eg. Ogg/Vorbis) can't be modified in place.
+        for(MusECore::iWaveSelection i = selection.begin(); i != selection.end(); i++)
+        {
+          if(i->event.empty() || i->event.sndFile().isNull())
+            continue;
+          if(!MusECore::SndFile::formatSupportsReadWrite(i->event.sndFile().format()))
+          {
+            QMessageBox::warning(this, tr("Wave edit"),
+              tr("The selection includes a compressed file (%1),\n"
+                 "which can not be modified in place.")
+                 .arg(i->event.sndFile().name()));
+            return;
+          }
+        }
+
         std::vector<MusECore::SndFileR> copy_files_proj_dir;
         for(MusECore::iWaveSelection i = selection.begin(); i != selection.end(); i++) 
         {

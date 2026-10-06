@@ -3809,6 +3809,13 @@ void Song::normalizePart(MusECore::Part *part)
       MusECore::SndFileR file = ev.sndFile();
       if(file.isNull())
         continue;
+      // Compressed files (eg. Ogg/Vorbis) can't be modified in place.
+      if(!MusECore::SndFile::formatSupportsReadWrite(file.format()))
+      {
+        QMessageBox::warning(MusEGlobal::muse, tr("Normalize"),
+          tr("%1 is a compressed file, which can not be modified in place.").arg(file.name()));
+        continue;
+      }
 
       QString tmpWavFile;
       if (!MusEGlobal::getUniqueTmpfileName("tmp_musewav",".wav", tmpWavFile))
