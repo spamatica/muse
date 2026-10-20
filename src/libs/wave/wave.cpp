@@ -268,6 +268,7 @@ bool SndFile::formatSupportsReadWrite(int format)
       switch (format & SF_FORMAT_TYPEMASK) {
             case SF_FORMAT_OGG:
             case SF_FORMAT_FLAC:
+            case 0x230000: // SF_FORMAT_MPEG, only defined in libsndfile >= 1.1.0
                   return false;
             default:
                   return true;

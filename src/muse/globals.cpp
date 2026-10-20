@@ -218,8 +218,8 @@ const char* drum_map_file_save_pattern[] = {
 };
 
 const char* audio_file_pattern[] = {
-      QT_TRANSLATE_NOOP("file_patterns", "Wave/Binary (*.wav *.ogg *.flac *.bin)"),
-      QT_TRANSLATE_NOOP("file_patterns", "Wave (*.wav *.ogg *.flac)"),
+      QT_TRANSLATE_NOOP("file_patterns", "Wave/Binary (*.wav *.ogg *.flac *.mp3 *.bin)"),
+      QT_TRANSLATE_NOOP("file_patterns", "Wave (*.wav *.ogg *.flac *.mp3)"),
       QT_TRANSLATE_NOOP("file_patterns", "Binary (*.bin)"),
       QT_TRANSLATE_NOOP("file_patterns", "All Files (*)"),
       nullptr

@@ -228,7 +228,7 @@ AudioPreviewDialog::AudioPreviewDialog(QWidget *parent, int systemSampleRate)
    _systemSampleRate(systemSampleRate)
 {
     setOption(QFileDialog::DontUseNativeDialog);
-    setNameFilter(QString("Samples *.wav *.ogg *.flac (*.wav *.WAV *.ogg *.flac);;All files (*)"));
+    setNameFilter(QString("Samples *.wav *.ogg *.flac *.mp3 (*.wav *.WAV *.ogg *.flac *.mp3 *.MP3);;All files (*)"));
     //cb = new QComboBox;
     //cb->setEditable(false);
     //cb->addItems(list_ports());

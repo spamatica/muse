@@ -4485,6 +4485,7 @@ void PartCanvas::viewDropEvent(QDropEvent* event)
             if (text.endsWith(".wav",Qt::CaseInsensitive) ||
                 text.endsWith(".ogg",Qt::CaseInsensitive) ||
                 text.endsWith(".flac",Qt::CaseInsensitive) ||
+                text.endsWith(".mp3",Qt::CaseInsensitive) ||
                 text.endsWith(".mpt", Qt::CaseInsensitive) )
             {
 
@@ -4498,7 +4499,8 @@ void PartCanvas::viewDropEvent(QDropEvent* event)
                 if (track->type() == MusECore::Track::WAVE &&
                         (text.endsWith(".wav", Qt::CaseInsensitive) ||
                           text.endsWith(".ogg", Qt::CaseInsensitive) ||
-                          (text.endsWith(".flac", Qt::CaseInsensitive)) ))
+                          text.endsWith(".flac", Qt::CaseInsensitive) ||
+                          text.endsWith(".mp3", Qt::CaseInsensitive) ))
                         {
                         unsigned tick = x;
                         MusEGlobal::muse->importWaveToTrack(text, tick, track);

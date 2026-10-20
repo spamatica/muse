@@ -5690,7 +5690,30 @@ bool MusE::importWaveToTrack(QString& name, unsigned tick, MusECore::Track* trac
    track->setChannels(f->channels());
    track->resetMeter();
    int samples = f->samples();
-   if (MusEGlobal::sampleRate != f->samplerate()) {
+   const bool rateDiffers = MusEGlobal::sampleRate != f->samplerate();
+   // SF_FORMAT_MPEG, only defined in libsndfile >= 1.1.0
+   const bool isMp3 = (f->format() & SF_FORMAT_TYPEMASK) == 0x230000;
+   bool convertNow = false;
+   if (isMp3) {
+      QMessageBox mbox(this);
+      mbox.setWindowTitle(tr("Import MP3 file"));
+      mbox.setText(tr("Seeking in some MP3 files is not sample accurate, which can make\n"
+                      "playback start with silence or at the wrong position.\n"
+                      "A copy of the file can be converted to a wave file in the project folder now."));
+      mbox.setInformativeText(tr("Do you want to convert the file, or use the MP3 file directly?"));
+
+      QPushButton* convert_button = mbox.addButton(tr("Convert to wave"), QMessageBox::YesRole);
+      QPushButton* direct_button = mbox.addButton(tr("Use MP3 directly"), QMessageBox::NoRole);
+      mbox.addButton(tr("Cancel"), QMessageBox::RejectRole);
+      mbox.setDefaultButton(convert_button);
+
+      mbox.exec();
+      if(mbox.clickedButton() == convert_button)
+        convertNow = true;
+      else if(mbox.clickedButton() != direct_button)
+        return true;
+   }
+   if (rateDiffers && !convertNow) {
       QMessageBox mbox(this);
       mbox.setWindowTitle(tr("Import Wavefile"));
       mbox.setText(tr("This wave file has a samplerate of %1 Hz,\n"
@@ -5716,6 +5739,9 @@ bool MusE::importWaveToTrack(QString& name, unsigned tick, MusECore::Track* trac
         samples = f->samplesConverted();
       }
       else if(mbox.clickedButton() == resample_button)
+        convertNow = true;
+   }
+   if (convertNow) {
       {
         //save project if necessary
         //copy wave to project's folder,
@@ -5775,8 +5801,9 @@ bool MusE::importWaveToTrack(QString& name, unsigned tick, MusECore::Track* trac
         }
 
         int srErr = 0;
-        SRC_STATE *srState = src_new(SRC_SINC_BEST_QUALITY, sfiNew.channels, &srErr);
-        if(!srState)
+        // Only resample if needed, otherwise it is a plain (exact) copy.
+        SRC_STATE *srState = rateDiffers ? src_new(SRC_SINC_BEST_QUALITY, sfiNew.channels, &srErr) : nullptr;
+        if(rateDiffers && !srState)
         {
           QMessageBox::critical(MusEGlobal::muse, tr("Wave import error"),
                                 tr("Failed to initialize sample rate converter!"));
@@ -5798,7 +5825,14 @@ bool MusE::importWaveToTrack(QString& name, unsigned tick, MusECore::Track* trac
           pDlg.setMinimum(0);
           pDlg.setMaximum(f.samples());
           pDlg.setCancelButtonText(tr("Cancel"));
-          if(nCurTry == 0)
+          if(nCurTry == 0 && !rateDiffers)
+          {
+              pDlg.setLabelText(tr("Converting file\n"
+                                      "\"%1\"\n"
+                                      "to wave...")
+                                  .arg(f.name()));
+          }
+          else if(nCurTry == 0)
           {
               pDlg.setLabelText(tr("Resampling wave file\n"
                                       "\"%1\"\n"
@@ -5814,7 +5848,8 @@ bool MusE::importWaveToTrack(QString& name, unsigned tick, MusECore::Track* trac
                                 .arg(QFileInfo(fNewPath).fileName()).arg(nCurTry).arg(nTriesMax));
           }
           pDlg.setWindowModality(Qt::WindowModal);
-          src_reset(srState);
+          if(srState)
+            src_reset(srState);
           SRC_DATA sd;
           sd.src_ratio = ((double)MusEGlobal::sampleRate) / (double)f.samplerate();
           sf_count_t szBuf = 8192;
@@ -5844,44 +5879,52 @@ bool MusE::importWaveToTrack(QString& name, unsigned tick, MusECore::Track* trac
                 nFramesRead += nFramesBuf;
               }
 
-              sd.data_in = srcBuffer;
-              sd.data_out = dstBuffer;
-              sd.input_frames = nFramesBuf;
-              sd.output_frames = szBufInFrames;
-              sd.input_frames_used = 0;
-              sd.output_frames_gen = 0;
-              do
+              // Normalize if needed, detect the maximum peak value and write.
+              auto writeOut = [&](float* buf, long frames)
               {
-                if(src_process(srState, &sd) != 0)
-                    break;
-                sd.data_in += sd.input_frames_used * sChannels;
-                sd.input_frames -= sd.input_frames_used;
-
-                if(sd.output_frames_gen > 0)
+                nFramesWrote += frames;
+                for(unsigned ch = 0; ch < sChannels; ch++)
                 {
-                    nFramesWrote += sd.output_frames_gen;
-                    //detect maximum peek value;
-                    for(unsigned ch = 0; ch < sChannels; ch++)
-                    {
-
-                      for(long k = 0; k < sd.output_frames_gen; k++)
+                  for(long k = 0; k < frames; k++)
+                  {
+                      buf [k * sChannels + ch] *= fNormRatio;
+                      float fCurPeek = buf [k * sChannels + ch];
+                      if(fPeekMax < fCurPeek)
                       {
-                          dstBuffer [k * sChannels + ch] *= fNormRatio; //normilize if needed
-                          float fCurPeek = dstBuffer [k * sChannels + ch];
-                          if(fPeekMax < fCurPeek)
-                          {
-                            //update maximum peek value
-                            fPeekMax = fCurPeek;
-                          }
+                        fPeekMax = fCurPeek;
                       }
-                    }
-                    sf_writef_float(sfNew, dstBuffer, sd.output_frames_gen);
+                  }
                 }
-                else
-                    break;
+                sf_writef_float(sfNew, buf, frames);
+              };
 
+              if(!srState)
+              {
+                if(nFramesBuf > 0)
+                  writeOut(srcBuffer, nFramesBuf);
               }
-              while(true);
+              else
+              {
+                sd.data_in = srcBuffer;
+                sd.data_out = dstBuffer;
+                sd.input_frames = nFramesBuf;
+                sd.output_frames = szBufInFrames;
+                sd.input_frames_used = 0;
+                sd.output_frames_gen = 0;
+                do
+                {
+                  if(src_process(srState, &sd) != 0)
+                      break;
+                  sd.data_in += sd.input_frames_used * sChannels;
+                  sd.input_frames -= sd.input_frames_used;
+
+                  if(sd.output_frames_gen > 0)
+                      writeOut(dstBuffer, sd.output_frames_gen);
+                  else
+                      break;
+                }
+                while(true);
+              }
 
               pDlg.setValue(nFramesRead);
 
@@ -5892,7 +5935,8 @@ bool MusE::importWaveToTrack(QString& name, unsigned tick, MusECore::Track* trac
 
               if(pDlg.wasCanceled())//free all resources
               {
-                src_delete(srState);
+                if(srState)
+                  src_delete(srState);
                 sf_close(sfNew);
                 f.close();
                 f = nullptr;
@@ -5917,7 +5961,8 @@ bool MusE::importWaveToTrack(QString& name, unsigned tick, MusECore::Track* trac
         }
         while(nCurTry <= nTriesMax);
 
-        src_delete(srState);
+        if(srState)
+          src_delete(srState);
 
         sf_close(sfNew);
 
