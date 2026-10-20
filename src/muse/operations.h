@@ -163,7 +163,7 @@ struct PendingOperationItem
     AddTrack,          DeleteTrack,  MoveTrack,                   ModifyTrackName,
     SetTrackRecord, SetTrackMute, SetTrackSolo, SetTrackRecMonitor, SetTrackOff,
     ModifyTrackDrumMapItem, ReplaceTrackDrumMapPatchList,         UpdateDrumMaps,
-    AddPart,           DeletePart,   MovePart, SelectPart, ModifyPartStart, ModifyPartLength,  ModifyPartName,
+    AddPart,           DeletePart,   MovePart, SelectPart, ModifyPartStart, ModifyPartLength,  ModifyPartName, ModifyPartVolume, ModifyPartFadeIn, ModifyPartFadeOut,
     AddEvent,          DeleteEvent,  SelectEvent,  ModifyEventList,
     
     AddMidiCtrlVal,    DeleteMidiCtrlVal,     ModifyMidiCtrlVal,  AddMidiCtrlValList,
@@ -277,6 +277,7 @@ struct PendingOperationItem
     bool _boolA;
     const QString *_name;
     double _aux_send_value;
+    double _part_volume;
     int _insert_at;
     int _from_idx;
     int _address_client;
@@ -450,6 +451,14 @@ struct PendingOperationItem
     
   PendingOperationItem(Part* part, const QString* new_name, PendingOperationType type = ModifyPartName)
     { _type = type; _part = part; _name = new_name; }
+
+  // type is ModifyPartVolume. The value is linear gain.
+  PendingOperationItem(Part* part, double volume, PendingOperationType type)
+    { _type = type; _part = part; _part_volume = volume; }
+
+  // type is ModifyPartFadeIn or ModifyPartFadeOut. The value is a length in frames.
+  PendingOperationItem(Part* part, unsigned int frames, PendingOperationType type)
+    { _type = type; _part = part; _uintA = frames; }
 
   PendingOperationItem(Part* part, bool v, PendingOperationType type = SelectPart)
     { _type = type; _part = part; _boolA = v; }

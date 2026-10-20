@@ -55,7 +55,7 @@ struct UndoOp {
       enum UndoType {
             AddRoute, DeleteRoute,
             AddTrack, DeleteTrack,
-            AddPart,  DeletePart,  MovePart, ModifyPartStart, ModifyPartLength, ModifyPartName, SelectPart,
+            AddPart,  DeletePart,  MovePart, ModifyPartStart, ModifyPartLength, ModifyPartName, ModifyPartVolume, ModifyPartFadeIn, ModifyPartFadeOut, SelectPart,
             AddEvent, DeleteEvent, ModifyEvent, SelectEvent,
             AddAudioCtrlVal, AddAudioCtrlValStruct,
             DeleteAudioCtrlVal, ModifyAudioCtrlVal, ModifyAudioCtrlValList,
@@ -208,6 +208,11 @@ struct UndoOp {
             struct {
                   int trackno;
                 };
+            struct {
+                  // For ModifyPartVolume. Linear gain, 1.0 is 0 dB.
+                  double _oldPartVolume;
+                  double _newPartVolume;
+                };
             };
 
 
@@ -242,6 +247,11 @@ struct UndoOp {
       UndoOp(UndoType type, int n, const Track* track, bool noUndo = false);
       UndoOp(UndoType type, const Part* part, bool noUndo = false);
       UndoOp(UndoType type, const Part* part, const QString& old_name, const QString& new_name, bool noUndo = false);
+      // For ModifyPartVolume. The values are linear gain. The arguments are in this order to avoid
+      //  ambiguity with the other constructors that take a part and two numbers.
+      UndoOp(UndoType type, double old_volume, double new_volume, const Part* part, bool noUndo = false);
+      // For ModifyPartFadeIn and ModifyPartFadeOut. The values are lengths in frames.
+      UndoOp(UndoType type, int old_frames, int new_frames, const Part* part, bool noUndo = false);
       UndoOp(UndoType type, const Part* part, bool selected, bool selected_old, bool noUndo = false);
       UndoOp(UndoType type, const Part* part, unsigned int old_len_or_pos, unsigned int new_len_or_pos, Pos::TType new_time_type = Pos::TICKS,
              const Track* oTrack = 0, const Track* nTrack = 0, bool noUndo = false);

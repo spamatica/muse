@@ -440,6 +440,9 @@ Part::Part(Track* t)
       _selected   = false;
       _mute       = false;
       _colorIndex = 0;
+      _volume     = 1.0;
+      _fadeInFrames = 0;
+      _fadeOutFrames = 0;
       _uuid = newUuid();
       _clonemaster_uuid = _uuid;
       }
@@ -470,6 +473,9 @@ WavePart* WavePart::duplicateEmpty() const
 
 	*(PosLen*)part = *(PosLen*)this;
 	part->setMute(mute());
+	part->setVolume(volume());
+	part->setFadeInFrames(fadeInFrames());
+	part->setFadeOutFrames(fadeOutFrames());
 	
 	return part;
 }
@@ -492,6 +498,9 @@ MidiPart* MidiPart::duplicateEmpty() const
 
 	*(PosLen*)part = *(PosLen*)this;
 	part->setMute(mute());
+	part->setVolume(volume());
+	part->setFadeInFrames(fadeInFrames());
+	part->setFadeOutFrames(fadeOutFrames());
 	
 	return part;
 }
@@ -678,6 +687,9 @@ void Part::splitPart(unsigned int tickpos, Part*& p1, Part*& p2) const
 
       p1 = this->duplicateEmpty();   // new left part
       p2 = this->duplicateEmpty();   // new right part
+      // The left part keeps the fade in and the right part keeps the fade out.
+      p1->setFadeOutFrames(0);
+      p2->setFadeInFrames(0);
 
       switch (track()->type()) {
           case Track::WAVE:

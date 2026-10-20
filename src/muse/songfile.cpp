@@ -359,6 +359,12 @@ Part* Part::readFromXml(Xml& xml, Track* track, XmlReadStatistics* stats, bool d
                                npart->setColorIndex(xml.parseInt());
                         else if (tag == "mute")
                               npart->setMute(xml.parseInt());
+                        else if (tag == "volume")
+                              npart->setVolume(xml.parseDouble());
+                        else if (tag == "fadein")
+                              npart->setFadeInFrames(xml.parseUInt());
+                        else if (tag == "fadeout")
+                              npart->setFadeOutFrames(xml.parseUInt());
                         else if (tag == "event")
                         {
                               // If a new non-clone part was created, accept the events...
@@ -521,6 +527,13 @@ void Part::write(int level, Xml& xml, bool isCopy, bool forceWavePaths, XmlWrite
       xml.intTag(level, "color", _colorIndex);
       if (_mute)
             xml.intTag(level, "mute", _mute);
+      // Only write if it differs from the default, 1.0 (0 dB).
+      if (_volume != 1.0)
+            xml.doubleTag(level, "volume", _volume);
+      if (_fadeInFrames != 0)
+            xml.uintTag(level, "fadein", _fadeInFrames);
+      if (_fadeOutFrames != 0)
+            xml.uintTag(level, "fadeout", _fadeOutFrames);
 
       // If this is the first time writing a part with this clonemaster serial number,
       //  write the events, even if this part itself is a clone.

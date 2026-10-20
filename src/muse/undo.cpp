@@ -342,7 +342,7 @@ const char* UndoOp::typeName()
       static const char* name[] = {
             "AddRoute", "DeleteRoute", 
             "AddTrack", "DeleteTrack", 
-            "AddPart",  "DeletePart", "MovePart", "ModifyPartStart", "ModifyPartLength", "ModifyPartName", "SelectPart",
+            "AddPart",  "DeletePart", "MovePart", "ModifyPartStart", "ModifyPartLength", "ModifyPartName", "ModifyPartVolume", "ModifyPartFadeIn", "ModifyPartFadeOut", "SelectPart",
             "AddEvent", "DeleteEvent", "ModifyEvent", "SelectEvent",
             "AddAudioCtrlVal", "AddAudioCtrlValStruct",
             "DeleteAudioCtrlVal", "ModifyAudioCtrlVal", "ModifyAudioCtrlValList",
@@ -391,6 +391,13 @@ void UndoOp::dump()
                   break;
             case ModifyPartName:
                   printf("<%s>-<%s>\n", _oldName->toLocal8Bit().data(), _newName->toLocal8Bit().data());
+                  break;
+            case ModifyPartVolume:
+                  printf("<%f>-<%f>\n", _oldPartVolume, _newPartVolume);
+                  break;
+            case ModifyPartFadeIn:
+            case ModifyPartFadeOut:
+                  printf("<%d>-<%d>\n", _oldPropValue, _newPropValue);
                   break;
             case ModifyTrackChannel:
                   printf("%s <%d>-<%d>\n", track->name().toLocal8Bit().constData(), _oldPropValue, _newPropValue);
@@ -813,6 +820,15 @@ void Undo::insert(Undo::iterator position, const UndoOp& op)
     case UndoOp::ModifyPartName:
       fprintf(stderr, "Undo::insert: ModifyPartName\n");
     break;
+    case UndoOp::ModifyPartVolume:
+      fprintf(stderr, "Undo::insert: ModifyPartVolume\n");
+    break;
+    case UndoOp::ModifyPartFadeIn:
+      fprintf(stderr, "Undo::insert: ModifyPartFadeIn\n");
+    break;
+    case UndoOp::ModifyPartFadeOut:
+      fprintf(stderr, "Undo::insert: ModifyPartFadeOut\n");
+    break;
     case UndoOp::ModifyPartStart:
       fprintf(stderr, "Undo::insert: ModifyPartStart\n");
     break;
@@ -1117,6 +1133,25 @@ void Undo::insert(Undo::iterator position, const UndoOp& op)
           }
         break;
         
+        case UndoOp::ModifyPartFadeIn:
+        case UndoOp::ModifyPartFadeOut:
+          if(uo.type == n_op.type && uo.part == n_op.part)
+          {
+            // Simply replace the existing new value with the newer value.
+            uo._newPropValue = n_op._newPropValue;
+            return;
+          }
+        break;
+
+        case UndoOp::ModifyPartVolume:
+          if(uo.type == UndoOp::ModifyPartVolume && uo.part == n_op.part)
+          {
+            // Simply replace the existing new volume with the newer volume.
+            uo._newPartVolume = n_op._newPartVolume;
+            return;
+          }
+        break;
+
         case UndoOp::ModifyPartName:
           if(uo.type == UndoOp::ModifyPartName && uo.part == n_op.part)  
           {
@@ -2685,6 +2720,30 @@ UndoOp::UndoOp(UndoOp::UndoType type_, const Part* part_, const QString& old_nam
     _newName = new QString(new_name);
 }
 
+UndoOp::UndoOp(UndoOp::UndoType type_, double old_volume, double new_volume, const Part* part_, bool noUndo)
+{
+    assert(type_==ModifyPartVolume);
+    assert(part_);
+
+    type=type_;
+    part=part_;
+    _noUndo = noUndo;
+    _oldPartVolume = old_volume;
+    _newPartVolume = new_volume;
+}
+
+UndoOp::UndoOp(UndoOp::UndoType type_, int old_frames, int new_frames, const Part* part_, bool noUndo)
+{
+    assert(type_==ModifyPartFadeIn || type_==ModifyPartFadeOut);
+    assert(part_);
+
+    type=type_;
+    part=part_;
+    _noUndo = noUndo;
+    _oldPropValue = old_frames;
+    _newPropValue = new_frames;
+}
+
 UndoOp::UndoOp(UndoOp::UndoType type_, const Track* track_, const QString& old_name, const QString& new_name, bool noUndo)
 {
   assert(type_==ModifyTrackName);
@@ -3219,6 +3278,21 @@ void Song::revertOperationGroup1(Undo& operations)
                         
                   case UndoOp::ModifyPartName:
                         pendingOperations.add(PendingOperationItem(editable_part, i->_oldName, PendingOperationItem::ModifyPartName));
+                        updateFlags |= SC_PART_MODIFIED;
+                        break;
+
+                  case UndoOp::ModifyPartVolume:
+                        pendingOperations.add(PendingOperationItem(editable_part, i->_oldPartVolume, PendingOperationItem::ModifyPartVolume));
+                        updateFlags |= SC_PART_MODIFIED;
+                        break;
+
+                  case UndoOp::ModifyPartFadeIn:
+                        pendingOperations.add(PendingOperationItem(editable_part, (unsigned int)i->_oldPropValue, PendingOperationItem::ModifyPartFadeIn));
+                        updateFlags |= SC_PART_MODIFIED;
+                        break;
+
+                  case UndoOp::ModifyPartFadeOut:
+                        pendingOperations.add(PendingOperationItem(editable_part, (unsigned int)i->_oldPropValue, PendingOperationItem::ModifyPartFadeOut));
                         updateFlags |= SC_PART_MODIFIED;
                         break;
                         
@@ -4573,6 +4647,21 @@ void Song::executeOperationGroup1(Undo& operations)
                         
                   case UndoOp::ModifyPartName:
                         pendingOperations.add(PendingOperationItem(editable_part, i->_newName, PendingOperationItem::ModifyPartName));
+                        updateFlags |= SC_PART_MODIFIED;
+                        break;
+
+                  case UndoOp::ModifyPartVolume:
+                        pendingOperations.add(PendingOperationItem(editable_part, i->_newPartVolume, PendingOperationItem::ModifyPartVolume));
+                        updateFlags |= SC_PART_MODIFIED;
+                        break;
+
+                  case UndoOp::ModifyPartFadeIn:
+                        pendingOperations.add(PendingOperationItem(editable_part, (unsigned int)i->_newPropValue, PendingOperationItem::ModifyPartFadeIn));
+                        updateFlags |= SC_PART_MODIFIED;
+                        break;
+
+                  case UndoOp::ModifyPartFadeOut:
+                        pendingOperations.add(PendingOperationItem(editable_part, (unsigned int)i->_newPropValue, PendingOperationItem::ModifyPartFadeOut));
                         updateFlags |= SC_PART_MODIFIED;
                         break;
 

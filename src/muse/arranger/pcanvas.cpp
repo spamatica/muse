@@ -154,6 +154,12 @@ PartCanvas::PartCanvas(int* r, QWidget* parent, int sx, int sy)
       // Defaults:
       lineEditor = nullptr;
       editMode   = false;
+      _volDragPart = nullptr;
+      _volHoverPart = nullptr;
+      _fadeDragPart = nullptr;
+      _fadeDragIsIn = true;
+      _fadeHoverPart = nullptr;
+      _fadeHoverIsIn = true;
 
       supportsResizeToTheLeft = true;
       setStatusTip(tr("Part canvas: Use Pencil tool to draw parts, or double-click to create a new MIDI/drum part between the range markers. Press F1 for help."));
@@ -243,6 +249,13 @@ int PartCanvas::y2height(int y) const
 
 void PartCanvas::leaveEvent(QEvent*)
       {
+      if((_volHoverPart && !_volDragPart) || (_fadeHoverPart && !_fadeDragPart))
+      {
+        _volHoverPart = nullptr;
+        _fadeHoverPart = nullptr;
+        setCursor();
+        redraw();
+      }
       emit timeChanged(INT_MAX);
       }
 
@@ -1453,6 +1466,61 @@ bool PartCanvas::mousePress(QMouseEvent* event)
       Undo operations;
       bool ret = true;
 
+      // Is the left button pressed on the volume handle of a wave part? Start adjusting the volume.
+      if (button == Qt::LeftButton && !ctrlkey && !shiftkey && !altkey && _tool == PointerTool)
+      {
+        CItem* vitem = partVolumeHandleItem(ev_pos);
+        if(vitem)
+        {
+          _volDragPart = static_cast<NPart*>(vitem)->part();
+          _volDragOldValues.clear();
+          _volDragOldValues[_volDragPart] = _volDragPart->volume();
+          // If the part is one of several selected wave parts, those are adjusted along with it.
+          if(vitem->isSelected())
+          {
+            for(ciCItem i = items.begin(); i != items.end(); ++i)
+            {
+              const MusECore::Part* sp = static_cast<NPart*>(i->second)->part();
+              if(i->second->isSelected() && sp->track() && sp->track()->type() == MusECore::Track::WAVE)
+                _volDragOldValues[sp] = sp->volume();
+            }
+          }
+          _volDragValues = _volDragOldValues;
+          setCursor();
+          event->accept();
+          redraw();
+          // Handled. Do not select or move the part.
+          return false;
+        }
+
+        // Or on a fade in or fade out handle.
+        bool is_in = true;
+        vitem = partFadeHandleItem(ev_pos, is_in);
+        if(vitem)
+        {
+          _fadeDragPart = static_cast<NPart*>(vitem)->part();
+          _fadeDragIsIn = is_in;
+          _fadeDragOldValues.clear();
+          _fadeDragOldValues[_fadeDragPart] = is_in ? _fadeDragPart->fadeInFrames() : _fadeDragPart->fadeOutFrames();
+          // If the part is one of several selected wave parts, those are adjusted along with it.
+          if(vitem->isSelected())
+          {
+            for(ciCItem i = items.begin(); i != items.end(); ++i)
+            {
+              const MusECore::Part* sp = static_cast<NPart*>(i->second)->part();
+              if(i->second->isSelected() && sp->track() && sp->track()->type() == MusECore::Track::WAVE)
+                _fadeDragOldValues[sp] = is_in ? sp->fadeInFrames() : sp->fadeOutFrames();
+            }
+          }
+          _fadeDragValues = _fadeDragOldValues;
+          setCursor();
+          event->accept();
+          redraw();
+          // Handled. Do not select or move the part.
+          return false;
+        }
+      }
+
       if (!ctrlkey && (button == Qt::RightButton))
       {
         QMenu* menu = nullptr;
@@ -1620,6 +1688,52 @@ bool PartCanvas::mousePress(QMouseEvent* event)
 
 void PartCanvas::mouseRelease(QMouseEvent* event)
 {
+  if (_fadeDragPart)
+  {
+    const bool is_in = _fadeDragIsIn;
+    _fadeDragPart = nullptr;
+    Undo operations;
+    for(std::map<const MusECore::Part*, unsigned int>::const_iterator iv = _fadeDragValues.begin(); iv != _fadeDragValues.end(); ++iv)
+    {
+      const unsigned int old_v = _fadeDragOldValues[iv->first];
+      if(iv->second != old_v)
+        operations.push_back(UndoOp(is_in ? UndoOp::ModifyPartFadeIn : UndoOp::ModifyPartFadeOut,
+                                    (int)old_v, (int)iv->second, iv->first));
+    }
+    _fadeDragOldValues.clear();
+    _fadeDragValues.clear();
+    if(!operations.empty())
+      MusEGlobal::song->applyOperationGroup(operations);
+    // The mouse may no longer be over the handle.
+    _fadeHoverPart = nullptr;
+    setCursor();
+    event->accept();
+    redraw();
+    return;
+  }
+
+  if (_volDragPart)
+  {
+    _volDragPart = nullptr;
+    Undo operations;
+    for(std::map<const MusECore::Part*, double>::const_iterator iv = _volDragValues.begin(); iv != _volDragValues.end(); ++iv)
+    {
+      const double old_v = _volDragOldValues[iv->first];
+      if(iv->second != old_v)
+        operations.push_back(UndoOp(UndoOp::ModifyPartVolume, old_v, iv->second, iv->first));
+    }
+    _volDragOldValues.clear();
+    _volDragValues.clear();
+    if(!operations.empty())
+      MusEGlobal::song->applyOperationGroup(operations);
+    // The mouse may no longer be over the handle.
+    _volHoverPart = nullptr;
+    setCursor();
+    event->accept();
+    redraw();
+    return;
+  }
+
   const bool ctrlkey = event->modifiers() & Qt::ControlModifier;
   const bool shiftkey = event->modifiers() & Qt::ShiftModifier;
   const bool altkey = event->modifiers() & Qt::AltModifier;
@@ -1671,11 +1785,125 @@ void PartCanvas::mouseRelease(QMouseEvent* event)
 }
 
 //---------------------------------------------------------
+//   Part volume handle constants and helpers
+//---------------------------------------------------------
+
+// The volume range of the handle. At the bottom of the part the volume is zero (-inf dB).
+// The line is at the top of the part for 0 dB and above. Dragging above the top of the part increases
+//  the volume above 0 dB, by this many dB per pixel, up to the maximum.
+static const double partVolumeMinDb = -60.0;
+static const double partVolumeMaxDb = 12.0;
+static const double partVolumeDbPerPixelAboveTop = 0.25;
+// Dragging closer than this to 0 dB snaps to exactly 0 dB.
+static const double partVolumeSnapDb = 0.5;
+static const int partVolumeHandleSize = 7;
+
+// Silence is treated as the minimum dB, so that relative changes can be applied to it.
+static double volumeToDb(double volume)
+{
+  return volume <= 0.0 ? partVolumeMinDb : qMax(partVolumeMinDb, (double)muse_val2db(volume));
+}
+
+// Reaching the minimum dB gives silence. The maximum is limited.
+static double dbToVolume(double db)
+{
+  if(db <= partVolumeMinDb)
+    return 0.0;
+  return muse_db2val(qMin(db, partVolumeMaxDb));
+}
+
+//---------------------------------------------------------
 //   mouseMove
 //---------------------------------------------------------
 
 void PartCanvas::mouseMove(QMouseEvent* event)
       {
+      if (_fadeDragPart)
+      {
+        event->accept();
+        const unsigned int oldv = _fadeDragOldValues[_fadeDragPart];
+        const MusECore::Part* dp = _fadeDragPart;
+        const unsigned int other = _fadeDragIsIn ? dp->fadeOutFrames() : dp->fadeInFrames();
+        const unsigned int v = partFadeFromX(dp, mapx(event->pos().x()), _fadeDragIsIn, other);
+        if(v != _fadeDragValues[dp])
+        {
+          // The change in frames of the dragged part is applied to all the other parts too.
+          const int64_t delta = (int64_t)v - (int64_t)oldv;
+          for(std::map<const MusECore::Part*, unsigned int>::iterator iv = _fadeDragValues.begin(); iv != _fadeDragValues.end(); ++iv)
+          {
+            if(iv->first == dp)
+              iv->second = v;
+            else
+            {
+              const int64_t len = iv->first->lenFrame();
+              const int64_t otherf = _fadeDragIsIn ? iv->first->fadeOutFrames() : iv->first->fadeInFrames();
+              iv->second = (unsigned int)qBound((int64_t)0, (int64_t)_fadeDragOldValues[iv->first] + delta, qMax((int64_t)0, len - otherf));
+            }
+          }
+          redraw();
+        }
+        return;
+      }
+
+      if (_volDragPart)
+      {
+        event->accept();
+        for(ciCItem i = items.begin(); i != items.end(); ++i)
+        {
+          if(static_cast<NPart*>(i->second)->part() != _volDragPart)
+            continue;
+          QRect partRect, handle;
+          int lineY;
+          if(partVolumeGeometry(i->second, 1.0, partRect, lineY, handle))
+          {
+            const double v = partVolumeFromY(mapy(event->pos().y()), partRect);
+            if(v != _volDragValues[_volDragPart])
+            {
+              // The change in dB of the dragged part is applied to all the other parts too.
+              const double old_db = volumeToDb(_volDragOldValues[_volDragPart]);
+              const double delta_db = volumeToDb(v) - old_db;
+              for(std::map<const MusECore::Part*, double>::iterator iv = _volDragValues.begin(); iv != _volDragValues.end(); ++iv)
+              {
+                if(iv->first == _volDragPart)
+                  iv->second = v;
+                else
+                  iv->second = dbToVolume(volumeToDb(_volDragOldValues[iv->first]) + delta_db);
+              }
+              redraw();
+            }
+          }
+          break;
+        }
+        return;
+      }
+
+      // Hovering over a volume or fade handle? Show the volume and change the cursor.
+      {
+        const MusECore::Part* vpart = nullptr;
+        const MusECore::Part* fpart = nullptr;
+        bool fis_in = true;
+        if (_tool == PointerTool && drag == DRAG_OFF)
+        {
+          CItem* hitem = partVolumeHandleItem(event->pos());
+          if(hitem)
+            vpart = static_cast<NPart*>(hitem)->part();
+          else
+          {
+            hitem = partFadeHandleItem(event->pos(), fis_in);
+            if(hitem)
+              fpart = static_cast<NPart*>(hitem)->part();
+          }
+        }
+        if(vpart != _volHoverPart || fpart != _fadeHoverPart || (fpart && fis_in != _fadeHoverIsIn))
+        {
+          _volHoverPart = vpart;
+          _fadeHoverPart = fpart;
+          _fadeHoverIsIn = fis_in;
+          setCursor();
+          redraw();
+        }
+      }
+
       int x = event->pos().x();
       if (x < 0)
             x = 0;
@@ -1984,8 +2212,61 @@ void PartCanvas::setAutomationCurrentText(const MusECore::CtrlList *cl, double v
   automation.currentText = QString("Param:%1 Value:%2").arg(cl->name()).arg(valtxt);
 }
 
+// Cursors for the part volume and fade handles. They are small double arrows with a little square in the
+//  middle like the handle itself, to tell them apart from the normal resize and move cursors.
+static QCursor makePartHandleCursor(bool horizontal, qreal dpr)
+{
+  // The size in device independent pixels. The shape below is drawn in a 16x16 space and scaled up to this.
+  const int sz = 32;
+  QPixmap pm(qRound(sz * dpr), qRound(sz * dpr));
+  pm.fill(Qt::transparent);
+  pm.setDevicePixelRatio(dpr);
+
+  QPainter pp(&pm);
+  pp.setRenderHint(QPainter::Antialiasing, true);
+  if(!horizontal)
+  {
+    // Draw it horizontally and rotate around the center.
+    pp.translate(sz / 2.0, sz / 2.0);
+    pp.rotate(90);
+    pp.translate(-sz / 2.0, -sz / 2.0);
+  }
+  pp.scale(sz / 16.0, sz / 16.0);
+  pp.setPen(QPen(Qt::black, 0.75));
+  pp.setBrush(Qt::white);
+
+  QPolygonF arrows;
+  arrows << QPointF(1.5, 8.0) << QPointF(5.5, 4.0) << QPointF(5.5, 6.5)
+         << QPointF(10.5, 6.5) << QPointF(10.5, 4.0) << QPointF(14.5, 8.0)
+         << QPointF(10.5, 12.0) << QPointF(10.5, 9.5) << QPointF(5.5, 9.5) << QPointF(5.5, 12.0);
+  pp.drawPolygon(arrows);
+
+  // The little handle square.
+  pp.setBrush(QColor(110, 140, 200));
+  pp.drawRect(QRectF(6.5, 6.5, 3.0, 3.0));
+  pp.end();
+
+  // The default hotspot is the center of the pixmap, whatever the pixel ratio.
+  return QCursor(pm);
+}
+
 void PartCanvas::setCursor()
 {
+    if(_tool == PointerTool && (_volDragPart || _volHoverPart))
+    {
+      showCursor();
+      static QCursor vol_cursor = makePartHandleCursor(false, devicePixelRatioF());
+      QWidget::setCursor(vol_cursor);
+      return;
+    }
+    if(_tool == PointerTool && (_fadeDragPart || _fadeHoverPart))
+    {
+      showCursor();
+      static QCursor fade_cursor = makePartHandleCursor(true, devicePixelRatioF());
+      QWidget::setCursor(fade_cursor);
+      return;
+    }
+
     if(_tool != AutomationTool)
     {
       // Let the Canvas handle it, and call showCursor().
@@ -2539,6 +2820,167 @@ void PartCanvas::keyRelease(QKeyEvent* event)
 //    draws an item
 //---------------------------------------------------------
 
+//---------------------------------------------------------
+//   Part volume handle
+//---------------------------------------------------------
+
+bool PartCanvas::partVolumeGeometry(const CItem* item, double volume, QRect& partRect, int& lineY, QRect& handle) const
+{
+  const MusECore::Part* part = static_cast<const NPart*>(item)->part();
+  if(!part || !part->track() || part->track()->type() != MusECore::Track::WAVE)
+    return false;
+
+  // Use the same rectangle as drawItem().
+  QRect ubbr = item->bbox();
+  ubbr.moveTop(ubbr.y() + rmapyDev(1));
+  partRect = map(ubbr);
+
+  const int top = partRect.y() + 2;
+  const int bottom = partRect.y() + partRect.height() - 2;
+
+  if(volume <= 0.0)
+    lineY = bottom;
+  else
+  {
+    const double db = muse_val2db(volume);
+    if(db >= 0.0)
+      lineY = top;
+    else if(db <= partVolumeMinDb)
+      lineY = bottom;
+    else
+      lineY = top + (int)round(db / partVolumeMinDb * (bottom - top));
+  }
+
+  // Keep the whole handle inside the part, even if the line is at an extreme. At the top it touches the part's top border.
+  const int hs = partVolumeHandleSize;
+  int cy = lineY;
+  if(bottom - top > hs)
+    cy = qBound(partRect.y() + hs / 2, lineY, bottom - hs / 2);
+
+  // Center the handle horizontally in the visible portion of the part.
+  const int x0 = qMax(partRect.left(), 0);
+  const int x1 = qMin(partRect.right(), width() - 1);
+  const int cx = (x0 + (x1 > x0 ? x1 : x0)) / 2;
+
+  handle = QRect(cx - hs / 2, cy - hs / 2, hs, hs);
+  return true;
+}
+
+double PartCanvas::partVolumeFromY(int devY, const QRect& partRect) const
+{
+  const int top = partRect.y() + 2;
+  const int bottom = partRect.y() + partRect.height() - 2;
+
+  double db;
+  if(devY <= top)
+    db = (top - devY) * partVolumeDbPerPixelAboveTop;
+  else if(devY >= bottom || bottom <= top)
+    db = partVolumeMinDb;
+  else
+    db = partVolumeMinDb * (devY - top) / (double)(bottom - top);
+
+  if(db > partVolumeMaxDb)
+    db = partVolumeMaxDb;
+
+  if(db <= partVolumeMinDb)
+    return 0.0;
+  if(ABS(db) < partVolumeSnapDb)
+    return 1.0;
+  return muse_db2val(db);
+}
+
+CItem* PartCanvas::partVolumeHandleItem(const QPoint& pos) const
+{
+  const QPoint dev(mapx(pos.x()), mapy(pos.y()));
+  CItem* found = nullptr;
+  for(ciCItem i = items.begin(); i != items.end(); ++i)
+  {
+    const CItem* item = i->second;
+    QRect partRect, handle;
+    int lineY;
+    if(!partVolumeGeometry(item, static_cast<const NPart*>(item)->part()->volume(), partRect, lineY, handle))
+      continue;
+    // A bit of extra room makes it easier to hit.
+    if(handle.adjusted(-2, -2, 2, 2).contains(dev))
+      found = i->second;
+  }
+  return found;
+}
+
+bool PartCanvas::partFadeGeometry(const CItem* item, unsigned int fadeIn, unsigned int fadeOut,
+                                  QRect& partRect, int& inX, int& outX, QRect& inHandle, QRect& outHandle) const
+{
+  const MusECore::Part* part = static_cast<const NPart*>(item)->part();
+  if(!part || !part->track() || part->track()->type() != MusECore::Track::WAVE)
+    return false;
+
+  // Use the same rectangle as drawItem().
+  QRect ubbr = item->bbox();
+  ubbr.moveTop(ubbr.y() + rmapyDev(1));
+  partRect = map(ubbr);
+
+  const unsigned int frame = part->frame();
+  const unsigned int len = part->lenFrame();
+  if(fadeIn > len)
+    fadeIn = len;
+  if(fadeOut > len)
+    fadeOut = len;
+  inX = mapx(MusEGlobal::tempomap.frame2tick(frame + fadeIn));
+  outX = mapx(MusEGlobal::tempomap.frame2tick(frame + len - fadeOut));
+
+  // Keep the whole handles inside the part, at the top.
+  const int hs = partVolumeHandleSize;
+  const int cy = partRect.y() + hs / 2;
+  const int xmin = partRect.left() + hs / 2;
+  const int xmax = qMax(xmin, partRect.right() - hs / 2);
+  const int cxIn = qBound(xmin, inX, xmax);
+  const int cxOut = qBound(xmin, outX, xmax);
+  inHandle = QRect(cxIn - hs / 2, cy - hs / 2, hs, hs);
+  outHandle = QRect(cxOut - hs / 2, cy - hs / 2, hs, hs);
+  return true;
+}
+
+unsigned int PartCanvas::partFadeFromX(const MusECore::Part* part, int devX, bool isFadeIn, unsigned int otherFade) const
+{
+  const int64_t frame = MusEGlobal::tempomap.tick2frame(mapxDev(devX));
+  const int64_t pstart = part->frame();
+  const int64_t len = part->lenFrame();
+  int64_t f = isFadeIn ? frame - pstart : pstart + len - frame;
+  const int64_t maxf = qMax((int64_t)0, len - (int64_t)otherFade);
+  if(f > maxf)
+    f = maxf;
+  if(f < 0)
+    f = 0;
+  return (unsigned int)f;
+}
+
+CItem* PartCanvas::partFadeHandleItem(const QPoint& pos, bool& isFadeIn) const
+{
+  const QPoint dev(mapx(pos.x()), mapy(pos.y()));
+  CItem* found = nullptr;
+  for(ciCItem i = items.begin(); i != items.end(); ++i)
+  {
+    const CItem* item = i->second;
+    const MusECore::Part* part = static_cast<const NPart*>(item)->part();
+    QRect partRect, inHandle, outHandle;
+    int inX, outX;
+    if(!partFadeGeometry(item, part->fadeInFrames(), part->fadeOutFrames(), partRect, inX, outX, inHandle, outHandle))
+      continue;
+    // A bit of extra room makes it easier to hit.
+    if(inHandle.adjusted(-2, -2, 2, 2).contains(dev))
+    {
+      found = i->second;
+      isFadeIn = true;
+    }
+    else if(outHandle.adjusted(-2, -2, 2, 2).contains(dev))
+    {
+      found = i->second;
+      isFadeIn = false;
+    }
+  }
+  return found;
+}
+
 void PartCanvas::drawItem(QPainter& p, const CItem* item, const QRect& mr, const QRegion&)
       {
       const QRect ur = mapDev(mr);
@@ -2897,6 +3339,103 @@ void PartCanvas::drawItem(QPainter& p, const CItem* item, const QRect& mr, const
         p.drawLine(l1);  // Top line
         QLine l3(lbx_c, ye_0, rbx_c, ye_0);
         p.drawLine(l3);  // Bottom line
+
+        // Draw the volume line and handle of wave parts. At 0 dB the line is the same as the top border so skip it.
+        {
+          const bool dragging = (part == _volDragPart);
+          std::map<const MusECore::Part*, double>::const_iterator ivd = _volDragValues.find(part);
+          const double volume = (_volDragPart && ivd != _volDragValues.end()) ? ivd->second : part->volume();
+          QRect partRect, handle;
+          int lineY;
+          if(partVolumeGeometry(item, volume, partRect, lineY, handle))
+          {
+            if(volume != 1.0)
+            {
+              QColor lc(Qt::white);
+              lc.setAlpha(200);
+              QPen lp(lc);
+              lp.setCosmetic(true);
+              p.setPen(lp);
+              p.drawLine(lbx_c, lineY, rbx_c, lineY);
+            }
+            p.setPen(QPen(Qt::black, 1));
+            p.setBrush((dragging || part == _volHoverPart) ? QColor(Qt::yellow) : QColor(Qt::white));
+            p.drawRect(handle);
+            p.setBrush(Qt::NoBrush);
+
+            if(dragging || (!_volDragPart && part == _volHoverPart))
+            {
+              const QString txt = volume <= 0.0 ? tr("-inf dB") : tr("%1 dB").arg(muse_val2db(volume), 0, 'f', 1);
+              // Place the text below the line.
+              const QRect tr_rect(handle.right() + 4, qMax(handle.bottom(), lineY) + 2, 80, p.fontMetrics().height() + 2);
+              p.setFont(MusEGlobal::config.fonts[2]);
+              p.setPen(Qt::black);
+              p.drawText(tr_rect.translated(1, 1), Qt::AlignTop|Qt::AlignLeft, txt);
+              p.setPen(Qt::white);
+              p.drawText(tr_rect, Qt::AlignTop|Qt::AlignLeft, txt);
+            }
+          }
+        }
+
+        // Draw the fade in and fade out lines and handles of wave parts.
+        {
+          unsigned int fadeIn = part->fadeInFrames();
+          unsigned int fadeOut = part->fadeOutFrames();
+          if(_fadeDragPart)
+          {
+            std::map<const MusECore::Part*, unsigned int>::const_iterator ifd = _fadeDragValues.find(part);
+            if(ifd != _fadeDragValues.end())
+            {
+              if(_fadeDragIsIn)
+                fadeIn = ifd->second;
+              else
+                fadeOut = ifd->second;
+            }
+          }
+          QRect partRect, inHandle, outHandle;
+          int inX, outX;
+          if(partFadeGeometry(item, fadeIn, fadeOut, partRect, inX, outX, inHandle, outHandle))
+          {
+            const int bottom = partRect.y() + partRect.height() - 2;
+            QColor lc(Qt::white);
+            lc.setAlpha(200);
+            QPen lp(lc);
+            lp.setCosmetic(true);
+            p.setPen(lp);
+            if(fadeIn > 0)
+              p.drawLine(partRect.left() + 1, bottom, inHandle.center().x(), inHandle.center().y());
+            if(fadeOut > 0)
+              p.drawLine(partRect.right() - 1, bottom, outHandle.center().x(), outHandle.center().y());
+
+            p.setPen(QPen(Qt::black, 1));
+            const bool inActive = (part == _fadeDragPart && _fadeDragIsIn) || (!_fadeDragPart && part == _fadeHoverPart && _fadeHoverIsIn);
+            const bool outActive = (part == _fadeDragPart && !_fadeDragIsIn) || (!_fadeDragPart && part == _fadeHoverPart && !_fadeHoverIsIn);
+            p.setBrush(inActive ? QColor(Qt::yellow) : QColor(Qt::white));
+            p.drawRect(inHandle);
+            p.setBrush(outActive ? QColor(Qt::yellow) : QColor(Qt::white));
+            p.drawRect(outHandle);
+            p.setBrush(Qt::NoBrush);
+
+            // Show the length of the fade being dragged or hovered over, below the handle.
+            if(inActive || outActive)
+            {
+              const unsigned int frames = inActive ? fadeIn : fadeOut;
+              const unsigned int sr = MusEGlobal::sampleRate > 0 ? MusEGlobal::sampleRate : 1;
+              const unsigned int ms = (unsigned int)(((uint64_t)frames * 1000 + sr / 2) / sr);
+              const QString txt = tr("%1 s %2 ms").arg(ms / 1000).arg(ms % 1000);
+              p.setFont(MusEGlobal::config.fonts[2]);
+              const QRect& h = inActive ? inHandle : outHandle;
+              const int tw = p.fontMetrics().horizontalAdvance(txt) + 2;
+              // The fade in text goes to the right of the handle and the fade out text to the left, so it stays inside the part.
+              const QRect tr_rect(inActive ? h.right() + 4 : h.left() - 4 - tw, h.bottom() + 2, tw, p.fontMetrics().height() + 2);
+              const int al = inActive ? Qt::AlignLeft : Qt::AlignRight;
+              p.setPen(Qt::black);
+              p.drawText(tr_rect.translated(1, 1), Qt::AlignTop|al, txt);
+              p.setPen(Qt::white);
+              p.drawText(tr_rect, Qt::AlignTop|al, txt);
+            }
+          }
+        }
 
         if (MusEGlobal::config.canvasShowPartType & 1) {     // show names
             QRect tr = mbbr;

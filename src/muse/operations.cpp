@@ -169,6 +169,9 @@ unsigned int PendingOperationItem::getIndex() const
     case SetTrackRecMonitor:
     case SetTrackOff:
     case ModifyPartName:
+    case ModifyPartVolume:
+    case ModifyPartFadeIn:
+    case ModifyPartFadeOut:
     case ModifySongLength:
     case AddMidiCtrlValList:
     case ModifyAudioCtrlValList:
@@ -1200,6 +1203,24 @@ SongChangedStruct_t PendingOperationItem::executeRTStage()
     case ModifyPartName:
       DEBUG_OPERATIONS(stderr, "PendingOperationItem::executeRTStage ModifyPartName part:%p new_val:%s\n", _part, _name->toLocal8Bit().data());
       _part->setName(*_name);
+      flags |= SC_PART_MODIFIED;
+    break;
+
+    case ModifyPartVolume:
+      DEBUG_OPERATIONS(stderr, "PendingOperationItem::executeRTStage ModifyPartVolume part:%p new_val:%f\n", _part, _part_volume);
+      _part->setVolume(_part_volume);
+      flags |= SC_PART_MODIFIED;
+    break;
+
+    case ModifyPartFadeIn:
+      DEBUG_OPERATIONS(stderr, "PendingOperationItem::executeRTStage ModifyPartFadeIn part:%p new_val:%u\n", _part, _uintA);
+      _part->setFadeInFrames(_uintA);
+      flags |= SC_PART_MODIFIED;
+    break;
+
+    case ModifyPartFadeOut:
+      DEBUG_OPERATIONS(stderr, "PendingOperationItem::executeRTStage ModifyPartFadeOut part:%p new_val:%u\n", _part, _uintA);
+      _part->setFadeOutFrames(_uintA);
       flags |= SC_PART_MODIFIED;
     break;
     

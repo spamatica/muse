@@ -136,6 +136,11 @@ class Part : public PosLen {
       bool _selected;
       bool _mute;
       int _colorIndex;
+      // Linear gain of the part, 1.0 is 0 dB. Currently only used by wave parts.
+      double _volume;
+      // Fade in and out lengths in frames. Currently only used by wave parts.
+      unsigned int _fadeInFrames;
+      unsigned int _fadeOutFrames;
                    
    protected:
       Track* _track;
@@ -179,6 +184,14 @@ class Part : public PosLen {
       EventList& nonconst_events()     { return _events; }
       int colorIndex() const           { return _colorIndex; }
       void setColorIndex(int idx)      { _colorIndex = idx; }
+      // Linear gain of the part, 1.0 (0 dB) by default.
+      double volume() const            { return _volume; }
+      void setVolume(double v)         { _volume = v; }
+      // Length of the fade in and fade out of the part, in frames. Zero means no fade.
+      unsigned int fadeInFrames() const   { return _fadeInFrames; }
+      void setFadeInFrames(unsigned int f)  { _fadeInFrames = f; }
+      unsigned int fadeOutFrames() const  { return _fadeOutFrames; }
+      void setFadeOutFrames(unsigned int f) { _fadeOutFrames = f; }
       
       bool isCloneOf(const Part*) const;
       bool hasClones() const           { return _prevClone!=this || _nextClone!=this; }

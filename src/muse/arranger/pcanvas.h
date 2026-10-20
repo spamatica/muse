@@ -168,6 +168,46 @@ class PartCanvas : public Canvas {
 
       AutomationObject automation;
 
+      // Part volume handle. Geometry is in device (mapped) coordinates.
+      // Fills the part rectangle, the y of the volume line and the handle rectangle for the given linear volume.
+      // Returns false if the item can not have a volume handle.
+      bool partVolumeGeometry(const CItem* item, double volume, QRect& partRect, int& lineY, QRect& handle) const;
+      // Converts a device y position, relative to the part rectangle, to a linear volume.
+      double partVolumeFromY(int devY, const QRect& partRect) const;
+      // Returns the item whose volume handle is at the given position (in the event's coordinates), or nullptr.
+      CItem* partVolumeHandleItem(const QPoint& pos) const;
+      // The part whose volume handle is being dragged, or nullptr. The volume is only applied on release.
+      MusECore::Part* _volDragPart;
+      // The linear volumes before dragging started, of the dragged part and all other parts adjusted with it.
+      std::map<const MusECore::Part*, double> _volDragOldValues;
+      // The linear volumes currently being dragged to, for the same parts.
+      std::map<const MusECore::Part*, double> _volDragValues;
+      // The part whose volume handle the mouse is hovering over, or nullptr.
+      const MusECore::Part* _volHoverPart;
+
+      // Part fade in and fade out handles. Geometry is in device (mapped) coordinates.
+      // Fills the part rectangle, the device x positions of the end of the fade in and the start of the fade out,
+      //  and the handle rectangles. Returns false if the item can not have fade handles.
+      bool partFadeGeometry(const CItem* item, unsigned int fadeIn, unsigned int fadeOut,
+                            QRect& partRect, int& inX, int& outX, QRect& inHandle, QRect& outHandle) const;
+      // Converts a device x position to a fade length in frames for the part, limited by the part length
+      //  and the given length of the opposite fade.
+      unsigned int partFadeFromX(const MusECore::Part* part, int devX, bool isFadeIn, unsigned int otherFade) const;
+      // Returns the item whose fade handle is at the given position (in the event's coordinates), or nullptr.
+      // Sets isFadeIn to which of the item's two handles it is.
+      CItem* partFadeHandleItem(const QPoint& pos, bool& isFadeIn) const;
+      // The part whose fade handle is being dragged, or nullptr. The fade is only applied on release.
+      MusECore::Part* _fadeDragPart;
+      // Whether the dragged handle is the fade in handle, otherwise it is the fade out handle.
+      bool _fadeDragIsIn;
+      // The fade lengths in frames before dragging started, of the dragged part and all other parts adjusted with it.
+      std::map<const MusECore::Part*, unsigned int> _fadeDragOldValues;
+      // The fade lengths in frames currently being dragged to, for the same parts.
+      std::map<const MusECore::Part*, unsigned int> _fadeDragValues;
+      // The part whose fade handle the mouse is hovering over, or nullptr, and which handle.
+      const MusECore::Part* _fadeHoverPart;
+      bool _fadeHoverIsIn;
+
       void updateSelectedItem(CItem* newItem, bool add, bool singleSelection);
       virtual void keyPress(QKeyEvent*);
       virtual void keyRelease(QKeyEvent* event);

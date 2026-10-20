@@ -233,7 +233,48 @@ void WaveTrack::fetchData(unsigned pos, unsigned samples, float** bp, bool doSee
                     for (int i = 0; i < channels(); ++i)
                           bpp[i] = bp[i] + dstOffset;
 
-                    event.readAudio(srcOffset, bpp, channels(), nn, doSeek, do_overwrite);
+                    const float part_gain = part->volume();
+                    const int64_t fade_in = part->fadeInFrames();
+                    const int64_t fade_out = part->fadeOutFrames();
+                    if(part_gain == 1.0f && fade_in == 0 && fade_out == 0)
+                    {
+                      event.readAudio(srcOffset, bpp, channels(), nn, doSeek, do_overwrite);
+                    }
+                    else
+                    {
+                      // The part has its own volume. Read into a temporary buffer, then scale and add to the output.
+                      // The output has been cleared above if we are overwriting, so adding is the same as overwriting.
+                      float tmp[channels()][nn];
+                      memset(tmp, 0, sizeof(tmp));
+                      float* tmpp[channels()];
+                      for (int i = 0; i < channels(); ++i)
+                            tmpp[i] = tmp[i];
+                      event.readAudio(srcOffset, tmpp, channels(), nn, doSeek, true);
+                      if(fade_in == 0 && fade_out == 0)
+                      {
+                        for (int i = 0; i < channels(); ++i)
+                              for (unsigned int j = 0; j < nn; ++j)
+                                    bpp[i][j] += tmp[i][j] * part_gain;
+                      }
+                      else
+                      {
+                        // Linear fades. The position in the part follows the audio that was read.
+                        const int64_t part_len = part->lenFrame();
+                        // The event frame is relative to the part and is negative if the part was trimmed from the left, so convert via int.
+                        const int64_t pos0 = (int64_t)(int)event.frame() + (int64_t)srcOffset;
+                        for (unsigned int j = 0; j < nn; ++j)
+                        {
+                          const int64_t rel = pos0 + j;
+                          float g = part_gain;
+                          if(fade_in > 0 && rel < fade_in)
+                            g *= rel <= 0 ? 0.0f : (float)rel / (float)fade_in;
+                          if(fade_out > 0 && rel >= part_len - fade_out)
+                            g *= rel >= part_len ? 0.0f : (float)(part_len - rel) / (float)fade_out;
+                          for (int i = 0; i < channels(); ++i)
+                                bpp[i][j] += tmp[i][j] * g;
+                        }
+                      }
+                    }
                     do_overwrite = false;
                     }
               }
