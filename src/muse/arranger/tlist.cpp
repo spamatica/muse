@@ -543,7 +543,9 @@ void TList::paint(const QRect& r)
                         }
 
                         s = QString(" %1(%2) %3").arg(countVisible).arg(countAll).arg(tr("visible"));
-                        p.drawText(r, Qt::AlignTop|Qt::AlignLeft, s);
+                        // The summary is the first row of the column, the visible controllers are listed below it.
+                        // Only when there is no such list is there room to center it vertically like the other columns.
+                        p.drawText(r, (countVisible > 0 ? Qt::AlignTop : Qt::AlignVCenter) | Qt::AlignLeft, s);
 
                     } else {
                         p.setFont(fit);
@@ -2081,6 +2083,9 @@ void TList::mousePressEvent(QMouseEvent* ev)
     mode = NORMAL;
     TrackColumn col = TrackColumn(header->logicalIndexAt(x));
 
+    // A plain left click on the automation column selects the track and then also opens the automation menu.
+    const bool automationLeftClick = button == Qt::LeftButton && col == COL_AUTOMATION && !ctrl && !shift;
+
     if (button == Qt::LeftButton && col != COL_INPUT_MONITOR && col != COL_RECORD && col != COL_MUTE && col != COL_SOLO)
     {
         mode = START_DRAG;  // Allow a track drag to start.
@@ -2147,7 +2152,9 @@ void TList::mousePressEvent(QMouseEvent* ev)
 
         MusEGlobal::song->update(SC_TRACK_SELECTION);
     }
-    else
+
+    if (!(button == Qt::LeftButton && col != COL_INPUT_MONITOR && col != COL_RECORD && col != COL_MUTE && col != COL_SOLO)
+        || automationLeftClick)
     {
         switch (col) {
 
@@ -2186,7 +2193,9 @@ void TList::mousePressEvent(QMouseEvent* ev)
 
         case COL_AUTOMATION:
         {
-            if (button == Qt::RightButton && !t->isMidiTrack()) {
+            // Left click opens the menu too, unless it is a ctrl/shift track selection click.
+            if (!t->isMidiTrack() &&
+                (button == Qt::RightButton || (button == Qt::LeftButton && !ctrl && !shift))) {
                 editAutomation = t;
                 PopupMenu* p = new PopupMenu(true);
                 p->disconnect();
