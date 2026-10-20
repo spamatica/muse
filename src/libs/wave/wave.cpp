@@ -158,6 +158,7 @@ SndFile::SndFile(
   : _isOffline(isOffline), _useConverter(installConverter)
       {
       _stretchList = nullptr;
+
       _audioConverterSettings = nullptr;
       if(_useConverter)
       {
@@ -390,14 +391,14 @@ bool SndFile::openRead(bool createCache, bool showProgress)
 
         if(finfo)
           _staticAudioConverterUI = setupAudioConverter(
-            audioConverterSettings(), 
+            audioConverterSettings(),
             *_defaultSettings,
             true,  // true = Local settings.
-            AudioConverterSettings::GuiMode, 
+            AudioConverterSettings::GuiMode,
             isResampled(),
             isStretched());
       }
-      
+
       writeFlag = false;
       openFlag  = true;
 
@@ -815,10 +816,10 @@ void SndFile::read(SampleV* s, int mag, unsigned pos, bool overwrite, bool allow
                   if(overwrite)
                     s[ch].peak = 0;
 
-                  float rms = 0.0;
+                  //float rms = 0.0;
                   for (int i = 0; i < mag; i++) {
                         float fd = data[ch][i];
-                        rms += fd;
+                        //rms += fd;
                         int idata = int(fd * 255.0);
                         if (idata < 0)
                               idata = -idata;
@@ -874,7 +875,7 @@ void SndFile::readConverted(SampleV* s, int mag, sf_count_t pos, sf_count_t offs
       }
         
       const int srcChannels = channels();
-        
+
       if(overwrite)
         for (int ch = 0; ch < srcChannels; ++ch) {
             s[ch].peak = 0;
@@ -903,7 +904,7 @@ void SndFile::readConverted(SampleV* s, int mag, sf_count_t pos, sf_count_t offs
             else
               ret = _staticAudioConverter->process(
                 sf, channels(), sampleRateRatio(), stretchList(), pos, fp, srcChannels, n, true);
-            
+
             if(ret != n)
               return;
 
@@ -912,10 +913,10 @@ void SndFile::readConverted(SampleV* s, int mag, sf_count_t pos, sf_count_t offs
                   if(overwrite)
                     s[ch].peak = 0;
 
-                  float rms = 0.0;
+                  //float rms = 0.0;
                   for (int i = 0; i < mag; i++) {
                         float fd = data[ch][i];
-                        rms += fd;
+                        //rms += fd;
                         int idata = int(fd * 255.0);
                         if (idata < 0)
                               idata = -idata;
@@ -1180,7 +1181,6 @@ sf_count_t SndFile::convertPosition(sf_count_t pos) const
     if(type != 0)
       new_pos = _stretchList->unSquish(new_pos, type);
   }
-
   return new_pos;
 }
 
@@ -1237,8 +1237,9 @@ sf_count_t SndFile::samplesConverted() const
       {
       if(sfinfo.samplerate == 0 || _systemSampleRate == 0)
         return 0;
-      return samples() / sampleRateRatio();
+      return convertPosition(samples());
       }
+
 
 //---------------------------------------------------------
 //   channels
