@@ -107,6 +107,10 @@ extern bool initDummyAudio();
 #ifdef HAVE_RTAUDIO
 extern bool initRtAudio(bool forceDefault = false);
 #endif
+#ifdef ALSA_SUPPORT
+// Returns true on FAILURE.
+extern bool initAlsaAudio();
+#endif
 extern bool initJackAudio();
 extern void initMidiController();
 extern void initMetronome();
@@ -310,6 +314,11 @@ enum CommandLineParseResult
     CommandLineHelpRequested
 };
 
+// Set by the -b and --alsa-device command line options. They override the audio driver settings from the
+//  configuration for this run only. A backend of -1 means no override.
+static int audioBackendOverride = -1;
+static QString alsaDeviceOverride;
+
 CommandLineParseResult parseCommandLine(
   QCommandLineParser &parser, QString *errorMessage,
   QString& open_filename, AudioDriverSelect& audioType, bool& force_plugin_rescan, bool& dont_plugin_rescan)
@@ -335,6 +344,13 @@ CommandLineParseResult parseCommandLine(
 #endif                   
   QCommandLineOption option_j("j", QCoreApplication::translate("main", "Use JAckAudio driver to connect to Jack audio server"));
   parser.addOption(option_j);
+  QCommandLineOption option_b(QStringList() << "b" << "audio-backend", QCoreApplication::translate("main",
+    "Override the audio driver setting. One of: jack, dummy (midi only), pulse (RtAudio Pulse), rtalsa (RtAudio ALSA), "
+    "oss (RtAudio OSS), rtaudio (RtAudio best guess), alsa (direct ALSA)."), "name");
+  parser.addOption(option_b);
+  QCommandLineOption option_alsadev("alsa-device", QCoreApplication::translate("main",
+    "Override the pcm device name for the direct ALSA audio driver, for example hw:0,0 (default: the setting, or 'default')"), "device");
+  parser.addOption(option_alsadev);
   QCommandLineOption option_J("J", QCoreApplication::translate("main", "Do not try to auto-start the Jack audio server"));
   parser.addOption(option_J);
   QCommandLineOption option_F("F", QCoreApplication::translate("main",
@@ -461,6 +477,38 @@ CommandLineParseResult parseCommandLine(
 
   if(parser.isSet(option_j))
     audioType = JackAudioOverride;
+
+  if(parser.isSet(option_b))
+  {
+    const QString name = parser.value(option_b).trimmed().toLower();
+    int backend = -1;
+    if(name == "jack")
+      backend = MusEGlobal::JackAudio;
+    else if(name == "dummy" || name == "midi")
+      backend = MusEGlobal::DummyAudio;
+    else if(name == "pulse")
+      backend = MusEGlobal::RtAudioPulse;
+    else if(name == "rtalsa")
+      backend = MusEGlobal::RtAudioAlsa;
+    else if(name == "oss")
+      backend = MusEGlobal::RtAudioOss;
+    else if(name == "rtaudio")
+      backend = MusEGlobal::RtAudioChoice;
+    else if(name == "alsa")
+      backend = MusEGlobal::AlsaAudio;
+    else
+    {
+      *errorMessage = QCoreApplication::translate("main", "Unknown audio backend '%1'. Use one of: "
+        "jack, dummy, pulse, rtalsa, oss, rtaudio, alsa").arg(parser.value(option_b));
+      return CommandLineError;
+    }
+    // This goes through the same selection as the configuration setting. It wins over -a, -t and -j.
+    audioType = DriverConfigSetting;
+    audioBackendOverride = backend;
+  }
+
+  if(parser.isSet(option_alsadev))
+    alsaDeviceOverride = parser.value(option_alsadev);
 
   if(parser.isSet(option_F))
     MusEGlobal::populateMidiPortsOnStart = false;
@@ -1385,6 +1433,15 @@ int main(int argc, char* argv[])
 #ifdef HAVE_LASH
         bool using_jack = false;
 #endif
+        // Apply the command line overrides of the driver settings. They are restored below so that they
+        //  are not saved in the configuration.
+        const int saved_audio_backend = MusEGlobal::config.deviceAudioBackend;
+        const QString saved_alsa_device = MusEGlobal::config.deviceAudioAlsaDevice;
+        if(audioBackendOverride >= 0)
+          MusEGlobal::config.deviceAudioBackend = audioBackendOverride;
+        if(!alsaDeviceOverride.isEmpty())
+          MusEGlobal::config.deviceAudioAlsaDevice = alsaDeviceOverride;
+
         if (MusEGlobal::debugMode) {
             MusEGlobal::realTimeScheduling = false;
             MusECore::initDummyAudio();
@@ -1453,6 +1510,20 @@ int main(int argc, char* argv[])
 #endif
                 break;
               }
+            case MusEGlobal::AlsaAudio:
+              {
+                fprintf(stderr, "User ALSA direct backend - selected through configuration\n");
+                MusEGlobal::realTimeScheduling = true;
+#ifdef ALSA_SUPPORT
+                if(MusECore::initAlsaAudio())
+                  fallbackDummy();
+                else
+                  fprintf(stderr, "Using ALSA direct\n");
+#else
+                fallbackDummy();
+#endif
+                break;
+              }
             case MusEGlobal::JackAudio:
               {
                 fprintf(stderr, "User JackAudio backend - backend selected through configuration\n");
@@ -1481,6 +1552,9 @@ int main(int argc, char* argv[])
               }
           }
         }
+
+        MusEGlobal::config.deviceAudioBackend = saved_audio_backend;
+        MusEGlobal::config.deviceAudioAlsaDevice = saved_alsa_device;
 
         MusEGlobal::realTimeScheduling = MusEGlobal::audioDevice->isRealtime();
 

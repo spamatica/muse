@@ -172,6 +172,9 @@ extern void exitMidiAlsa();
 #ifdef HAVE_RTAUDIO
 extern void exitRtAudio();
 #endif
+#ifdef ALSA_SUPPORT
+extern void exitAlsaAudio();
+#endif
 }
 
 namespace MusEGui {
@@ -2829,6 +2832,11 @@ void MusE::closeEvent(QCloseEvent* event)
     if(MusEGlobal::debugMsg)
         fprintf(stderr, "MusE: Exiting RtAudio\n");
     MusECore::exitRtAudio();
+#endif
+#ifdef ALSA_SUPPORT
+    if(MusEGlobal::debugMsg)
+        fprintf(stderr, "MusE: Exiting AlsaAudio\n");
+    MusECore::exitAlsaAudio();
 #endif
     if(MusEGlobal::debugMsg)
         fprintf(stderr, "MusE: Exiting Metronome\n");

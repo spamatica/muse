@@ -41,6 +41,13 @@ if (HAVE_RTAUDIO)
      )
 endif (HAVE_RTAUDIO)
 
+if (ALSA_SUPPORT)
+       file (GLOB driver_source_files
+       ${driver_source_files}
+       alsaaudio.cpp
+     )
+endif (ALSA_SUPPORT)
+
 if (WIN32)
        file (GLOB driver_source_files
        ${driver_source_files}

@@ -828,6 +828,26 @@
           <item row="0" column="1" colspan="4">
            <widget class="QComboBox" name="deviceAudioBackendComboBox"/>
           </item>
+          <item row="2" column="0">
+           <widget class="QLabel" name="deviceAudioAlsaDeviceLabel">
+            <property name="text">
+             <string>ALSA device:</string>
+            </property>
+            <property name="wordWrap">
+             <bool>false</bool>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1" colspan="4">
+           <widget class="QLineEdit" name="deviceAudioAlsaDevice">
+            <property name="toolTip">
+             <string>The ALSA pcm device name used by the direct ALSA audio backend, for example 'hw:0,0' or 'plughw:1,0'. Leave empty for 'default'.</string>
+            </property>
+            <property name="placeholderText">
+             <string>default</string>
+            </property>
+           </widget>
+          </item>
           <item row="1" column="0">
            <widget class="QLabel" name="deviceAudioSizeLabel">
             <property name="text">
@@ -2726,6 +2746,7 @@ Some plugins ignore this settings.</string>
   <tabstop>pluginPathRemove</tabstop>
   <tabstop>deviceAudioSize</tabstop>
   <tabstop>deviceAudioBackendComboBox</tabstop>
+  <tabstop>deviceAudioAlsaDevice</tabstop>
   <tabstop>deviceAudioRate</tabstop>
   <tabstop>minSliderSelect</tabstop>
   <tabstop>minMeterSelect</tabstop>

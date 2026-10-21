@@ -132,7 +132,7 @@ GlobalSettingsConfig::GlobalSettingsConfig(QWidget* parent)
       for (int i = 0; i < MusEGlobal::numRtAudioDevices; i++){
         deviceAudioBackendComboBox->addItem(MusEGlobal::selectableAudioBackendDevices[i],i);
       }
-#ifndef HAVE_RTAUDIO
+#if !defined(HAVE_RTAUDIO) && !defined(ALSA_SUPPORT)
       deviceAudioBackendComboBox->setDisabled(true);
 #endif
 
@@ -156,6 +156,10 @@ void GlobalSettingsConfig::updateBackendDeviceSettings()
         deviceAudioRate->setDisabled(false);
 
     }
+
+    // The device name is only used by the direct ALSA backend.
+    deviceAudioAlsaDeviceLabel->setEnabled(currentDevice == MusEGlobal::AlsaAudio);
+    deviceAudioAlsaDevice->setEnabled(currentDevice == MusEGlobal::AlsaAudio);
 }
 
 void GlobalSettingsConfig::updateStartingMidiNote(const MusECore::NoteNameList &nnl)
@@ -511,6 +515,7 @@ void GlobalSettingsConfig::updateSettings()
       showStatusBarCheckBox->setChecked(MusEGlobal::config.showStatusBar);
 
       deviceAudioBackendComboBox->setCurrentIndex(MusEGlobal::config.deviceAudioBackend);
+      deviceAudioAlsaDevice->setText(MusEGlobal::config.deviceAudioAlsaDevice);
 
       enableLatencyCorrectionButton->setChecked(MusEGlobal::config.enableLatencyCorrection);
       latencyInBranchUntermButton->setChecked(MusEGlobal::config.correctUnterminatedInBranchLatency);
@@ -637,6 +642,7 @@ void GlobalSettingsConfig::apply()
       MusEGlobal::config.deviceAudioSampleRate = MusEGlobal::selectableAudioSampleRates[deviceAudioRate->currentIndex()];
 
       MusEGlobal::config.deviceAudioBackend = deviceAudioBackendComboBox->currentIndex();
+      MusEGlobal::config.deviceAudioAlsaDevice = deviceAudioAlsaDevice->text().trimmed();
 
       int mcp = minControlProcessPeriodComboBox->currentIndex();
       MusEGlobal::config.minControlProcessPeriod = minControlProcessPeriods[mcp];

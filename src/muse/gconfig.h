@@ -459,6 +459,7 @@ struct GlobalConfigValues {
 
       bool recordOggVorbis;          // Record audio tracks to Ogg/Vorbis instead of float wave files.
       double recordOggVorbisQuality; // Ogg/Vorbis encoding quality, 0.0 (smallest) - 1.0 (best).
+      QString deviceAudioAlsaDevice; // The pcm device name for the direct ALSA audio backend. Empty means "default".
       };
 
 
