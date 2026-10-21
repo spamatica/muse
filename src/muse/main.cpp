@@ -111,6 +111,10 @@ extern bool initRtAudio(bool forceDefault = false);
 // Returns true on FAILURE.
 extern bool initAlsaAudio();
 #endif
+#ifdef PIPEWIRE_SUPPORT
+// Returns true on FAILURE.
+extern bool initPipeWireAudio();
+#endif
 extern bool initJackAudio();
 extern void initMidiController();
 extern void initMetronome();
@@ -346,7 +350,7 @@ CommandLineParseResult parseCommandLine(
   parser.addOption(option_j);
   QCommandLineOption option_b(QStringList() << "b" << "audio-backend", QCoreApplication::translate("main",
     "Override the audio driver setting. One of: jack, dummy (midi only), pulse (RtAudio Pulse), rtalsa (RtAudio ALSA), "
-    "oss (RtAudio OSS), rtaudio (RtAudio best guess), alsa (direct ALSA)."), "name");
+    "oss (RtAudio OSS), rtaudio (RtAudio best guess), alsa (direct ALSA), pipewire (direct PipeWire)."), "name");
   parser.addOption(option_b);
   QCommandLineOption option_alsadev("alsa-device", QCoreApplication::translate("main",
     "Override the pcm device name for the direct ALSA audio driver, for example hw:0,0 (default: the setting, or 'default')"), "device");
@@ -496,10 +500,12 @@ CommandLineParseResult parseCommandLine(
       backend = MusEGlobal::RtAudioChoice;
     else if(name == "alsa")
       backend = MusEGlobal::AlsaAudio;
+    else if(name == "pipewire")
+      backend = MusEGlobal::PipeWireAudio;
     else
     {
       *errorMessage = QCoreApplication::translate("main", "Unknown audio backend '%1'. Use one of: "
-        "jack, dummy, pulse, rtalsa, oss, rtaudio, alsa").arg(parser.value(option_b));
+        "jack, dummy, pulse, rtalsa, oss, rtaudio, alsa, pipewire").arg(parser.value(option_b));
       return CommandLineError;
     }
     // This goes through the same selection as the configuration setting. It wins over -a, -t and -j.
@@ -1505,6 +1511,20 @@ int main(int argc, char* argv[])
                   fallbackDummy();
                 else
                   fprintf(stderr, "Using rtAudio\n");
+#else
+                fallbackDummy();
+#endif
+                break;
+              }
+            case MusEGlobal::PipeWireAudio:
+              {
+                fprintf(stderr, "User PipeWire direct backend - selected through configuration\n");
+                MusEGlobal::realTimeScheduling = true;
+#ifdef PIPEWIRE_SUPPORT
+                if(MusECore::initPipeWireAudio())
+                  fallbackDummy();
+                else
+                  fprintf(stderr, "Using PipeWire direct\n");
 #else
                 fallbackDummy();
 #endif

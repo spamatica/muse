@@ -61,7 +61,7 @@ class AudioDevice {
       volatile unsigned int _dummyPosPending;
   
    public:
-      enum { DUMMY_AUDIO=0, JACK_AUDIO=1, RTAUDIO_AUDIO=2, ALSA_AUDIO=3 };
+      enum { DUMMY_AUDIO=0, JACK_AUDIO=1, RTAUDIO_AUDIO=2, ALSA_AUDIO=3, PIPEWIRE_AUDIO=4 };
       enum PortType { UnknownType=0, AudioPort=1, MidiPort=2 };
       enum PortDirection { UnknownDirection=0, InputPort=1, OutputPort=2 };
       

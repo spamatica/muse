@@ -175,6 +175,9 @@ extern void exitRtAudio();
 #ifdef ALSA_SUPPORT
 extern void exitAlsaAudio();
 #endif
+#ifdef PIPEWIRE_SUPPORT
+extern void exitPipeWireAudio();
+#endif
 }
 
 namespace MusEGui {
@@ -2837,6 +2840,11 @@ void MusE::closeEvent(QCloseEvent* event)
     if(MusEGlobal::debugMsg)
         fprintf(stderr, "MusE: Exiting AlsaAudio\n");
     MusECore::exitAlsaAudio();
+#endif
+#ifdef PIPEWIRE_SUPPORT
+    if(MusEGlobal::debugMsg)
+        fprintf(stderr, "MusE: Exiting PipeWireAudio\n");
+    MusECore::exitPipeWireAudio();
 #endif
     if(MusEGlobal::debugMsg)
         fprintf(stderr, "MusE: Exiting Metronome\n");

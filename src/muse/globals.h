@@ -78,7 +78,8 @@ enum SelectableAudioBackendDevices {
   RtAudioAlsa = 3,
   RtAudioOss = 4,
   RtAudioChoice = 5,
-  AlsaAudio = 6
+  AlsaAudio = 6,
+  PipeWireAudio = 7
   //RtAudioJack, -- it's just stupid to keep this option
 };
 

@@ -48,6 +48,14 @@ if (ALSA_SUPPORT)
      )
 endif (ALSA_SUPPORT)
 
+if (PIPEWIRE_SUPPORT)
+       file (GLOB driver_source_files
+       ${driver_source_files}
+       pipewireaudio.cpp
+       pipewiregraph.cpp
+     )
+endif (PIPEWIRE_SUPPORT)
+
 if (WIN32)
        file (GLOB driver_source_files
        ${driver_source_files}
@@ -86,6 +94,7 @@ target_link_libraries ( driver
       ${JACK_LIBRARIES}
       ${QT_LIBRARIES}
       ${RTAUDIO_LIBRARIES}
+      ${PIPEWIRE_LIBRARIES}
       mplugins
       )
 

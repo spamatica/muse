@@ -26,6 +26,7 @@
 #cmakedefine POSIX_TIMER_SUPPORT
 #cmakedefine ALSA_SUPPORT
 #cmakedefine HAVE_RTAUDIO
+#cmakedefine PIPEWIRE_SUPPORT
 #cmakedefine DSSI_ALSA_COMPAT_SUPPORT
 #cmakedefine HAVE_LASH
 #cmakedefine HAVE_LRDF

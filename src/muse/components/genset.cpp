@@ -132,7 +132,7 @@ GlobalSettingsConfig::GlobalSettingsConfig(QWidget* parent)
       for (int i = 0; i < MusEGlobal::numRtAudioDevices; i++){
         deviceAudioBackendComboBox->addItem(MusEGlobal::selectableAudioBackendDevices[i],i);
       }
-#if !defined(HAVE_RTAUDIO) && !defined(ALSA_SUPPORT)
+#if !defined(HAVE_RTAUDIO) && !defined(ALSA_SUPPORT) && !defined(PIPEWIRE_SUPPORT)
       deviceAudioBackendComboBox->setDisabled(true);
 #endif
 
@@ -149,6 +149,12 @@ void GlobalSettingsConfig::updateBackendDeviceSettings()
     if (currentDevice == MusEGlobal::JackAudio)
     {
         deviceAudioSize->setDisabled(true);
+        deviceAudioRate->setDisabled(true);
+    }
+    else if (currentDevice == MusEGlobal::PipeWireAudio)
+    {
+        // The period size is only a request to PipeWire, but the samplerate is up to the PipeWire server.
+        deviceAudioSize->setDisabled(false);
         deviceAudioRate->setDisabled(true);
     }
     else {

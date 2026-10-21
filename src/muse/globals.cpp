@@ -67,11 +67,12 @@ const QString selectableAudioBackendDevices[] = {
     "RtAudio ALSA",
     "RtAudio OSS - Open Sound System",
     "RtAudio best guess",
-    "ALSA direct"
+    "ALSA direct",
+    "PipeWire direct"
 };
 
 // The number of entries in selectableAudioBackendDevices.
-const int numRtAudioDevices = 7;
+const int numRtAudioDevices = 8;
 
 MusEGui::Rasterizer *globalRasterizer = nullptr;
 
