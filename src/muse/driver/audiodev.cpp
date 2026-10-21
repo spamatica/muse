@@ -25,6 +25,7 @@
 #include "large_int.h"
 #ifdef _WIN32
 #include <sys/time.h>
+#include <time.h>
 #endif
 
 // Forwards from header:
@@ -41,6 +42,9 @@ AudioDevice::AudioDevice()
   _syncTimeoutCounter = 0.0;
   _dummyStatePending = 0;
   _dummyPosPending = 0;
+  _dspLoad = 0.0f;
+  _dspBusyUs = 0.0;
+  _dspWindowUs = 0.0;
 }
 
 
@@ -125,7 +129,29 @@ bool AudioDevice::processTransport(unsigned int frames)
   // Now call the audio process.
   // Don't process while we're syncing. ToDO: May need to deliver silence in process!
   //if(jackAudio->getState() != Audio::START_PLAY)
+  {
+    // Measure how much of the period the process takes, for the DSP load.
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
     MusEGlobal::audio->process(frames);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+
+    if(MusEGlobal::sampleRate > 0 && frames > 0)
+    {
+      const double busy_us = (double)(t1.tv_sec - t0.tv_sec) * 1000000.0 + (double)(t1.tv_nsec - t0.tv_nsec) / 1000.0;
+      const double period_us = (double)frames * 1000000.0 / (double)MusEGlobal::sampleRate;
+      // Average over a window of one second of audio and then publish the result. This gives a calm display
+      //  that changes once per second, instead of jumping around with each cycle.
+      _dspBusyUs += busy_us;
+      _dspWindowUs += period_us;
+      if(_dspWindowUs >= 1000000.0)
+      {
+        _dspLoad.store((float)(100.0 * _dspBusyUs / _dspWindowUs));
+        _dspBusyUs = 0.0;
+        _dspWindowUs = 0.0;
+      }
+    }
+  }
   
   // Is the transport playing? Advance the transport position.
   if(_dummyState == Audio::PLAY)

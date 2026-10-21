@@ -163,7 +163,7 @@ void CpuToolbar::init()
     _resetButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
     _resetButton->setIcon(QIcon(":/svg/cpu.svg"));
     _resetButton->setObjectName("CpuLoadToolbarButton");
-    _resetButton->setToolTip(tr("CPU load averaged over each GUI update period\nDSP load read from JACK\nNumber of xruns\n(click to reset)"));
+    _resetButton->setToolTip(tr("CPU load averaged over each GUI update period\nDSP load: the part of each audio period used for processing\nNumber of xruns\n(click to reset)"));
 
     _cpuLabel = new PaddedValueLabel(true, this, Qt::Widget, "CPU: ", "%");
     _cpuLabel->setFieldWidth(5);
@@ -207,7 +207,7 @@ CpuStatusBar::CpuStatusBar(QWidget* parent)
     : QWidget(parent)
 {
     setObjectName("CpuLoadStatusBar");
-    setToolTip(tr("CPU load averaged over each GUI update period\nDSP load read from JACK\nNumber of xruns\n(click to reset)"));
+    setToolTip(tr("CPU load averaged over each GUI update period\nDSP load: the part of each audio period used for processing\nNumber of xruns\n(click to reset)"));
 
     cpuLabel = new PaddedValueLabel(true, this, Qt::Widget, "CPU: ", "%");
     cpuLabel->setToolTip(tr("CPU load averaged over each GUI update period."));
@@ -216,8 +216,8 @@ CpuStatusBar::CpuStatusBar(QWidget* parent)
     cpuLabel->setPrecision(1);
 
     dspLabel = new PaddedValueLabel(true, this, Qt::Widget, "DSP: ", "%");
-    dspLabel->setToolTip(tr("DSP load read from JACK."));
-    dspLabel->setStatusTip(tr("DSP load read from JACK."));
+    dspLabel->setToolTip(tr("DSP load: the part of each audio period used for processing.\nRead from JACK, or measured by MusE for the other drivers."));
+    dspLabel->setStatusTip(tr("DSP load: the part of each audio period used for processing."));
     dspLabel->setFieldWidth(5);
     dspLabel->setPrecision(1);
 

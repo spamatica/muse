@@ -34,6 +34,7 @@
 #include <sys/time.h>
 #endif
 #include <stdint.h>
+#include <atomic>
 
 namespace MusECore {
 
@@ -59,6 +60,13 @@ class AudioDevice {
       unsigned int _dummyPos;
       volatile int _dummyStatePending;
       volatile unsigned int _dummyPosPending;
+
+      // The DSP load in percent, as measured around the audio process in processTransport().
+      std::atomic<float> _dspLoad;
+      // The processing time and the audio time of the period measured so far in the current window, in microseconds.
+      // Only used by the audio process.
+      double _dspBusyUs;
+      double _dspWindowUs;
   
    public:
       enum { DUMMY_AUDIO=0, JACK_AUDIO=1, RTAUDIO_AUDIO=2, ALSA_AUDIO=3, PIPEWIRE_AUDIO=4 };
@@ -101,7 +109,10 @@ class AudioDevice {
       virtual void* registerOutPort(const char* /*name*/, bool /*midi*/) = 0;
       virtual void* registerInPort(const char* /*name*/, bool /*midi*/) = 0;
 
-      virtual float getDSP_Load() { return 0.0f; }
+      // The share of each audio period that is spent processing, in percent.
+      // Drivers that get this from somewhere else (Jack) override this. For the others it is measured
+      //  around the audio process in processTransport().
+      virtual float getDSP_Load() { return _dspLoad.load(); }
 
       virtual PortType portType(void*) const = 0;
       virtual PortDirection portDirection(void*) const = 0;
