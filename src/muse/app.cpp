@@ -1021,6 +1021,7 @@ MusE::MusE() : QMainWindow()
       addToolBar(cpuLoadToolbar);
       cpuLoadToolbar->hide(); // hide as a default, the info is now in status bar too
       connect(cpuLoadToolbar, SIGNAL(resetClicked()), SLOT(resetXrunsCounter()));
+      cpuLoadToolbar->setXrunsAvailable(!MusEGlobal::audioDevice || MusEGlobal::audioDevice->countsXruns());
 
       QToolBar* songpos_tb = addToolBar(tr("Timeline"));
       songpos_tb->setObjectName("Timeline tool");
@@ -6171,6 +6172,7 @@ void MusE::initStatusBar() {
 
     cpuStatusBar = new CpuStatusBar(statusBar());
     connect(cpuStatusBar, SIGNAL(resetClicked()), SLOT(resetXrunsCounter()));
+    cpuStatusBar->setXrunsAvailable(!MusEGlobal::audioDevice || MusEGlobal::audioDevice->countsXruns());
     statusBar()->addPermanentWidget(cpuStatusBar);
 
     QString s = QString("%1 | Sample rate: %2Hz | Segment size: %3 | Segment count: %4")

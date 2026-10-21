@@ -51,6 +51,7 @@ protected:
     int _precision;
     int _iVal;
     double _dVal;
+    bool _notAvailable;
 
     virtual void updateText();
 
@@ -66,6 +67,8 @@ public:
 
     void setIntValue(int val);
     void setFloatValue(double val);
+    // Show "n/a" instead of the value, and grey the label out.
+    void setNotAvailable(bool notAvailable);
     virtual QSize sizeHint() const;
     //      void mouseDoubleClickEvent(QMouseEvent* event);
 };
@@ -115,6 +118,8 @@ public:
     void setDspLabelText(const QString&);
     void setXrunsLabelText(const QString&);
     void setValues(float cpuLoad, float dspLoad, long xRunsCount);
+    // Whether the audio driver counts xruns. If not, the xrun display is greyed out.
+    void setXrunsAvailable(bool available);
 
 signals:
     void resetClicked();
@@ -141,6 +146,8 @@ public:
     void setDspLabelText(const QString&);
     void setXrunsLabelText(const QString&);
     void setValues(float cpuLoad, float dspLoad, long xRunsCount);
+    // Whether the audio driver counts xruns. If not, the xrun display is greyed out.
+    void setXrunsAvailable(bool available);
 
 signals:
     void resetClicked();

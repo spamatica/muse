@@ -135,6 +135,8 @@ class AudioDevice {
       virtual void graphChanged() {}
       virtual void registrationChanged() {}
       virtual void connectionsChanged() {}
+      // Whether the driver counts xruns, with Audio::incXruns(). If not, the xrun display has nothing to show.
+      virtual bool countsXruns() const { return false; }
       // Whether the device has its own transport (Jack transport etc.), beyond the one built into this class.
       virtual bool hasOwnTransport() const { return false; };
       // Whether the device supports timebase master capabilities.

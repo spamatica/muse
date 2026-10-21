@@ -45,6 +45,7 @@ PaddedValueLabel::PaddedValueLabel(bool isFloat, QWidget* parent, Qt::WindowFlag
     setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Minimum);
     _iVal = 0;
     _dVal = 0.0;
+    _notAvailable = false;
     _fieldWidth = 2;
     _precision = 1;
     updateText();
@@ -78,9 +79,18 @@ void PaddedValueLabel::setFloatValue(double val)
     updateText();
 }
 
+void PaddedValueLabel::setNotAvailable(bool notAvailable)
+{
+    _notAvailable = notAvailable;
+    setEnabled(!notAvailable);
+    updateText();
+}
+
 void PaddedValueLabel::updateText()
 {
-    if(_isFloat)
+    if(_notAvailable)
+        setText(QString("%1%2").arg(_prefix).arg(tr("n/a")));
+    else if(_isFloat)
         setText(QString("%1%L2%3").arg(_prefix).arg(_dVal, 0, 'f', _precision).arg(_suffix));
     else
         setText(QString("%1%2%3").arg(_prefix).arg(_iVal).arg(_suffix));
@@ -112,7 +122,10 @@ XRunLabel::XRunLabel(QWidget* parent)
 }
 
 void XRunLabel::updateText() {
-    if (_iVal > 0)
+    // Let the disabled look of the label show, not our colors.
+    if (_notAvailable)
+        setStyleSheet(QString());
+    else if (_iVal > 0)
         setStyleSheet("QLabel { color : red; }");
     else
         setStyleSheet("QLabel { color : " + defTextColor + "; }");
@@ -179,6 +192,13 @@ void CpuToolbar::setValues(float cpuLoad, float dspLoad, long xRunsCount)
     _xrunsLabel->setIntValue(xRunsCount);
 }
 
+void CpuToolbar::setXrunsAvailable(bool available)
+{
+    _xrunsLabel->setNotAvailable(!available);
+    _xrunsLabel->setToolTip(available ? tr("Number of xruns.") :
+                                        tr("The current audio driver does not report xruns."));
+}
+
 //---------------------------------
 //   CpuStatusbar
 //---------------------------------
@@ -223,6 +243,15 @@ void CpuStatusBar::setValues(float cpuLoad, float dspLoad, long xRunsCount)
     cpuLabel->setFloatValue(cpuLoad);
     dspLabel->setFloatValue(dspLoad);
     xrunsLabel->setIntValue(xRunsCount);
+}
+
+void CpuStatusBar::setXrunsAvailable(bool available)
+{
+    xrunsLabel->setNotAvailable(!available);
+    const QString tip = available ? tr("Number of xruns.\nDouble-click to reset.") :
+                                    tr("The current audio driver does not report xruns.");
+    xrunsLabel->setToolTip(tip);
+    xrunsLabel->setStatusTip(tip);
 }
 
 

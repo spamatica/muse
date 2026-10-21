@@ -198,6 +198,7 @@ class AlsaAudioDevice : public AudioDevice {
       virtual const char* canonicalPortName(void*) { return nullptr; }
       virtual unsigned int portLatency(void*, bool /*capture*/) const { return 0; }
 
+      virtual bool countsXruns() const { return true; }
       virtual bool isRealtime() { return MusEGlobal::realTimeScheduling; }
       virtual int realtimePriority() const { return 40; }
 

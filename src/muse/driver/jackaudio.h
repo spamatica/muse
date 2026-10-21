@@ -171,6 +171,7 @@ class JackAudioDevice : public AudioDevice {
       virtual void setFreewheel(bool f);
       // Whether the device has its own transport (Jack transport etc.), beyond the one built into this class.
       virtual bool hasOwnTransport() const { return true; };
+      virtual bool countsXruns() const { return true; }
       // Whether the device supports timebase master capabilities.
       virtual bool hasTimebaseMaster() const { return true; };
       // Sets or resets timebase master. Returns 0 on success. Otherwise, may return an error code.
