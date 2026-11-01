@@ -850,6 +850,7 @@ void initLV2()
         case MusEPlugin::PluginTypeDSSIVST:
         case MusEPlugin::PluginTypeDSSI:
         case MusEPlugin::PluginTypeVST:
+        case MusEPlugin::PluginTypeVST3:
         case MusEPlugin::PluginTypeLinuxVST:
         case MusEPlugin::PluginTypeMESS:
         case MusEPlugin::PluginTypeUnknown:

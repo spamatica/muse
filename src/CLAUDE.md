@@ -1,0 +1,57 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Overview
+
+MusE is a MIDI/audio sequencer for Linux (C++17, Qt5, CMake). The git root is `muse_spamatica/`; all source lives in `src/` (this directory). The current branch (`new-backends`) adds direct ALSA and PipeWire audio backends alongside JACK/RtAudio/dummy.
+
+## Build
+
+```
+./compile_muse.sh          # creates build/, runs cmake (release, -DMODULES_BUILD_STATIC=ON), then `make clean all`
+```
+
+Note that the script runs `make clean`, so it always does a full rebuild. For incremental work use the existing `build/` directory:
+
+```
+cd build && cmake -DCMAKE_BUILD_TYPE=release -DMODULES_BUILD_STATIC=ON .. && make -j$(nproc)
+make install               # prefix is set by -DCMAKE_INSTALL_PREFIX (the script uses $HOME/muse_spamatica)
+```
+
+- Feature toggles are CMake options in [CMakeLists.txt](CMakeLists.txt) (`ENABLE_ALSA`, `ENABLE_PIPEWIRE`, `ENABLE_RTAUDIO`, `ENABLE_LV2`, `ENABLE_VST_NATIVE`, `ENABLE_DSSI`, `ENABLE_OSC`, `ENABLE_FLUID`, `ENABLE_RUBBERBAND`, `ENABLE_PYTHON`, etc.). JACK is a core dependency. Each option wraps code in `#ifdef` guarded by a matching define in `config.h.in`.
+- `MODULES_BUILD_STATIC=ON` links the internal modules (muse/ subdirectories, `libs/`, `al`, `awl`, ...) statically; the default is OFF (shared).
+- Qt5 only (Widgets, Core, UiTools, LinguistTools, Xml, Svg). Dialogs/widgets are largely `.ui` files compiled via uic.
+- VST3 (work in progress, see [README.vst3](README.vst3)): `-DENABLE_VST3=ON -DVST3_SDK_PATH=<vst3sdk checkout>` (default OFF). Plugin scanning and VST3 effects work (`muse/vst3.cpp`; bundles are scanned in the `muse_plugin_scan` sandbox; both use the host code in `vst3/`); VST3 instruments (synth tracks) work too. `vst3/` also builds stand-alone with its own tests (`ctest` there), and `ctest -R vst3_cache` runs the cache test from the MusE build dir.
+- There is **no automated test suite for the application and no linter configuration**. Verify changes by building and running the `muse` binary. (`awl/ltest.cpp` is an unrelated widget demo.)
+- Release steps (version bump in CMakeLists.txt, ChangeLog, `make package_source`, tagging) are in [README.developer](README.developer). Style guidance there is just "keep it consistent".
+
+## Layout
+
+- `muse/` – the application (main.cpp, app.cpp = main window, song, tracks, parts, events, plugins, the audio engine). Subdirectories: `driver/` (audio/MIDI/timer backends), `arranger/`, `midiedit/` (pianoroll, drum edit), `waveedit/`, `mixer/`, `master/` (tempo/sig/key editors), `liste/` (list editor), `marker/`, `cliplist/`, `components/` and `widgets/` (dialogs and custom widgets), `instruments/` (MIDI instrument definitions, MidNam), `ctrl/`, `lv2Support/`, `mplugins/`, `remote/` (Python/OSC control), `function_dialogs/`.
+- `libs/` – shared helper libraries (xml, wave, midnam, mpevent, time_stretch, plugin, memory, ...).
+- `synti/` – bundled soft synths (fluid, deicsonze, organ, simpledrums2, vam, s1, ...) built on `libsynti`; `plugins/` – bundled LADSPA effects.
+- `al/`, `awl/` – low-level time/position helpers and Qt widget library; `audio_convert/` – sample-rate/stretch converters.
+- `share/`, `xpm/`, `svg/`, `qss/`, `resources.qrc` – runtime data, icons, themes. Translations come from `muse/` sources via Qt linguist.
+- Docs worth reading: `README.developer`, `README.developer.undo_system`, `README.softsynth`, `README.ladspaguis`.
+
+## Architecture: threads and the Operations system
+
+Understand this before touching song/track/part/event data. (Full explanation: [README.developer.undo_system](README.developer.undo_system).)
+
+- The realtime audio thread (driven by the audio driver callback; `Audio` in [muse/audio.h](muse/audio.h)) must never take mutexes, allocate, or print. The GUI thread therefore **must not mutate song containers (tracks, parts, events, routes, ...) directly**.
+- Instead, build a `PendingOperationList` ([muse/operations.h](muse/operations.h)) and execute it via `MusEGlobal::audio->msgExecutePendingOperations(...)`. The GUI thread blocks while the audio thread applies the operations at the start of the next cycle. Undoable changes go through `Undo` / `UndoOp` in [muse/undo.cpp](muse/undo.cpp), which wraps operations and drives undo/redo.
+- Other threads: `MidiSeq` (MIDI sequencer, [muse/midiseq.h](muse/midiseq.h)), `AudioPrefetch` (disk read/write for wave tracks), all derived from `Thread` ([muse/thread.h](muse/thread.h)). Cross-thread messages use the `seqmsg.cpp` / `msg*` mechanisms. Lock-free FIFOs (`lock_free_buffer.h`, `controlfifo`) pass data to the RT thread.
+- Globals live in the `MusEGlobal` namespace (`globals.h`, `gconfig.h`); notably `MusEGlobal::song`, `audio`, `audioDevice`, `midiSeq`.
+
+## Architecture: audio/MIDI drivers
+
+- `AudioDevice` ([muse/driver/audiodev.h](muse/driver/audiodev.h)) is the abstract backend interface; `deviceType()` returns one of `DUMMY_AUDIO, JACK_AUDIO, RTAUDIO_AUDIO, ALSA_AUDIO, PIPEWIRE_AUDIO`. Implementations: `jack.cpp`, `rtaudio.cpp`, `alsaaudio.cpp`, `pipewireaudio.cpp` (+ `pipewiregraph.*`), `dummyaudio.cpp`. Each init function assigns `MusEGlobal::audioDevice`, and clears it on exit.
+- Backends differ in capabilities (e.g. xrun counting, DSP load reporting; recent commits make the GUI gray out or measure these when a driver lacks them). When adding a backend feature, check how the other drivers and the GUI handle absence.
+- MIDI backends (`alsamidi.*`, `jackmidi.*`) and timer sources (`alsatimer`, `rtctimer`, `posixtimer`, `qttimer`, `simpletimer`, all behind `timerdev.h`) are independent of the audio backend.
+
+## Architecture: data model
+
+- `Song` ([muse/song.h](muse/song.h)) owns track lists (`Track` → `MidiTrack`, `WaveTrack`, `AudioTrack` → `AudioInput`/`AudioOutput`/`AudioGroup`/`AudioAux`, `SynthI`), each holding `Part`s of `Event`s. Tempo/sig/key maps are `tempo.*`, `sig.*`, `key.*`; positions are in `pos.*` with ticks/frames.
+- Routing between tracks, audio ports and MIDI ports is in `route.*`; plugin hosting is split across `plugin.*` (LADSPA), `dssihost`, `lv2host`, `vst_native`, `synth.*`.
+- Song files are XML (`songfile.cpp`, `libs/xml`); per-class `read()`/`write()` methods serialize each object.

@@ -135,3 +135,23 @@ install(TARGETS
         plugin_cache_writer_module
       DESTINATION ${MusE_MODULES_DIR}
       )
+
+##
+## Test of the VST3 part of the plugin cache. Needs the VST3 SDK (for muse_plugin_scan) and plugins installed.
+##
+if (VST3_SUPPORT)
+      add_executable ( vst3_cache_test
+            tests/vst3_cache_test.cpp
+            )
+      target_include_directories ( vst3_cache_test PRIVATE ${CMAKE_BINARY_DIR} )
+      target_link_libraries ( vst3_cache_test
+            plugin_cache_writer_module
+            plugin_cache_reader_module
+            plugin_list_module
+            plugin_scan_module
+            xml_module
+            ${QT_LIBRARIES}
+            )
+      add_test ( NAME vst3_cache_test COMMAND vst3_cache_test $<TARGET_FILE:muse_plugin_scan> )
+      set_tests_properties ( vst3_cache_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300 )
+endif (VST3_SUPPORT)

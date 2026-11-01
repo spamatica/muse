@@ -112,6 +112,7 @@ bool loadPlugins = true;
 bool loadMESS = true;
 bool loadVST = true;
 bool loadNativeVST = true;
+bool loadVST3 = true;
 bool loadDSSI = true;
 bool loadLV2 = true;
 bool usePythonBridge = false;

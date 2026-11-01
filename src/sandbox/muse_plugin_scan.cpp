@@ -21,6 +21,8 @@
 //
 //=========================================================
 
+#include <QBuffer>
+#include <QByteArray>
 #include <QFile>
 #include <QLibrary>
 
@@ -31,6 +33,10 @@
 //#include "globaldefs.h"
 #include "plugin_cache_writer.h"
 #include "xml.h"
+
+#ifdef VST3_SUPPORT
+#include "vst3_scan.h"
+#endif
 
 #include <ladspa.h>
 #include "synti/libsynti/mess.h"
@@ -104,6 +110,42 @@ static bool loadPluginLib(MusEPlugin::PluginTypes_t types,
     std::fprintf(stderr, "muse_plugin_scan: failed to open outfilename: %s for filename: %s\n", outfilename, filename);
     return false;
   }
+
+#ifdef VST3_SUPPORT
+  // VST3 bundles are not plain libraries. They are loaded by the VST3 host code.
+  if((types & MusEPlugin::PluginTypeVST3) && QString(filename).endsWith(".vst3"))
+  {
+    // Write to memory first so that a failed scan can be replaced by an 'unknown' entry.
+    QByteArray data;
+    QBuffer buffer(&data);
+    buffer.open(QIODevice::WriteOnly);
+    bool ok = false;
+    {
+      MusECore::Xml xml(&buffer);
+      xml.header();
+      int level = 0;
+      level = xml.putFileVersion(level);
+      ok = MusEPlugin::writeVst3Info(filename, do_ports, level, xml);
+      xml.tag(1, "/muse");
+    }
+    if(!ok)
+    {
+      std::fprintf(stderr, "muse_plugin_scan: writeVst3Info(%s) failed\n", filename);
+      data.clear();
+      buffer.seek(0);
+      MusECore::Xml xml(&buffer);
+      xml.header();
+      int level = 0;
+      level = xml.putFileVersion(level);
+      MusEPlugin::writeUnknownPluginInfo(filename, level, xml);
+      xml.tag(1, "/muse");
+    }
+    buffer.close();
+    outfile.write(data);
+    outfile.close();
+    return true;
+  }
+#endif // VST3_SUPPORT
 
   // Open the library...
   QLibrary qlib;

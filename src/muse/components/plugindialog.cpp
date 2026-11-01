@@ -162,6 +162,7 @@ PluginDialog::PluginDialog(QWidget* parent)
       ui.pluginType->addItem("LADSPA", SEL_TYPE_LADSPA);
       ui.pluginType->addItem("LV2", SEL_TYPE_LV2);
       ui.pluginType->addItem("VST", SEL_TYPE_VST);
+      ui.pluginType->addItem("VST3", SEL_TYPE_VST3);
 //      ui.pluginType->addItem("Wine VST", SEL_TYPE_WINE_VST);
 
       connect (ui.pluginType,SIGNAL(currentIndexChanged(int)), SLOT(filterType(int)));
@@ -500,6 +501,10 @@ void PluginDialog::fillPlugs()
 
               case MusEPlugin::PluginTypeMESS:
               case MusEPlugin::PluginTypeMETRONOME:
+              case MusEPlugin::PluginTypeVST3:
+                plugInstanceType = SEL_TYPE_VST3;
+              break;
+
               case MusEPlugin::PluginTypeVST:
               case MusEPlugin::PluginTypeNone:
               case MusEPlugin::PluginTypeUnknown:

@@ -1139,6 +1139,7 @@ void initMidiSynth()
       case MusEPlugin::PluginTypeDSSI:
       case MusEPlugin::PluginTypeDSSIVST:
       case MusEPlugin::PluginTypeVST:
+      case MusEPlugin::PluginTypeVST3:
       case MusEPlugin::PluginTypeLV2:
       case MusEPlugin::PluginTypeLinuxVST:
       case MusEPlugin::PluginTypeMETRONOME:

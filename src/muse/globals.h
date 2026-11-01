@@ -116,6 +116,7 @@ extern bool loadPlugins;
 extern bool loadMESS;
 extern bool loadVST;
 extern bool loadNativeVST;
+extern bool loadVST3;
 extern bool loadDSSI;
 extern bool usePythonBridge;
 extern QString pythonBridgePyroNSHostname;

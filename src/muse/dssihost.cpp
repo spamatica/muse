@@ -116,6 +116,7 @@ void initDSSI()
       
       case MusEPlugin::PluginTypeLADSPA:
       case MusEPlugin::PluginTypeVST:
+      case MusEPlugin::PluginTypeVST3:
       case MusEPlugin::PluginTypeLV2:
       case MusEPlugin::PluginTypeLinuxVST:
       case MusEPlugin::PluginTypeMESS:

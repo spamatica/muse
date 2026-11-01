@@ -54,6 +54,7 @@ const std::map<int, const char*> PluginTypeStringMap
  {PluginTypeLV2, QT_TRANSLATE_NOOP("MusEPlugin", "LV2")},
  {PluginTypeMESS, QT_TRANSLATE_NOOP("MusEPlugin", "MESS")},
  {PluginTypeMETRONOME, QT_TRANSLATE_NOOP("MusEPlugin", "Metronome")},
+ {PluginTypeVST3, QT_TRANSLATE_NOOP("MusEPlugin", "VST3")},
  {PluginTypeUnknown, QT_TRANSLATE_NOOP("MusEPlugin", "Unknown")}};
 
 const char* pluginTypeToString(const MusEPlugin::PluginType type)

@@ -42,6 +42,27 @@ target_link_libraries(muse_plugin_scan
       ${QT_LIBRARIES}
       )
 
+if (VST3_SUPPORT)
+      ##
+      ## VST3 scanning. The VST3 host code in ../vst3 is shared with the stand-alone tests there.
+      ## sdk_hosting does not contain the Linux module loader nor PlugProvider, the SDK examples add
+      ## those to their own sources, and so do we.
+      ##
+      set (VST3_HOSTING_DIR ${VST3_SDK_PATH}/public.sdk/source/vst/hosting)
+      add_library ( muse_vst3host STATIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/../vst3/vst3host.cpp
+            ${VST3_HOSTING_DIR}/module_linux.cpp
+            ${VST3_HOSTING_DIR}/plugprovider.cpp
+            ${VST3_SDK_PATH}/public.sdk/source/common/memorystream.cpp
+            )
+      target_include_directories ( muse_vst3host PUBLIC ${VST3_SDK_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/.. )
+      target_link_libraries ( muse_vst3host PUBLIC sdk_hosting sdk_common sdk base pluginterfaces ${CMAKE_DL_LIBS} )
+
+      target_sources ( muse_plugin_scan PRIVATE vst3_scan.cpp vst3_scan.h )
+      target_include_directories ( muse_plugin_scan PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/.. )
+      target_link_libraries ( muse_plugin_scan muse_vst3host )
+endif (VST3_SUPPORT)
+
 ##
 ## Install location
 ##

@@ -66,6 +66,8 @@
 #include "vst_native.h"
 #endif
 
+#include "vst3.h"
+
 #include "audio.h"
 #include "al/dsp.h"
 
@@ -1028,6 +1030,7 @@ void PluginConfiguration::writeProperties(int level, Xml& xml, bool isCopy, bool
     case MusEPlugin::PluginTypeLADSPA:
     case MusEPlugin::PluginTypeDSSI:
     case MusEPlugin::PluginTypeVST:
+    case MusEPlugin::PluginTypeVST3:
     case MusEPlugin::PluginTypeDSSIVST:
     case MusEPlugin::PluginTypeLinuxVST:
     case MusEPlugin::PluginTypeLV2:
@@ -1624,6 +1627,7 @@ int Plugin::release()
     case MusEPlugin::PluginTypeLV2:
     case MusEPlugin::PluginTypeLinuxVST:
     case MusEPlugin::PluginTypeVST:
+    case MusEPlugin::PluginTypeVST3:
     case MusEPlugin::PluginTypeMESS:
     case MusEPlugin::PluginTypeMETRONOME:
     case MusEPlugin::PluginTypeNone:
@@ -1891,6 +1895,7 @@ void initPlugins()
       break;
       
       case MusEPlugin::PluginTypeVST:
+      case MusEPlugin::PluginTypeVST3:
       case MusEPlugin::PluginTypeLV2:
       case MusEPlugin::PluginTypeLinuxVST:
       case MusEPlugin::PluginTypeMESS:
@@ -2395,6 +2400,11 @@ bool Pipeline::hasNativeGui(int idx) const
       return ((VstNativePluginWrapper *)p->plugin())->hasNativeGui();
 #endif
 
+#ifdef VST3_SUPPORT
+    if(p->pluginType() == MusEPlugin::PluginTypeVST3)
+      return ((Vst3PluginWrapper *)p->plugin())->hasNativeGui();
+#endif
+
 
       return !p->dssi_ui_filename().isEmpty();
   }
@@ -2440,6 +2450,14 @@ void Pipeline::showNativeGui(int idx, bool flag)
            }
 
 #endif
+
+#ifdef VST3_SUPPORT
+           if(p->plugin() && p->pluginType() == MusEPlugin::PluginTypeVST3)
+           {
+              ((Vst3PluginWrapper *)p->plugin())->showNativeGui(p, flag);
+              return;
+           }
+#endif
       #ifdef OSC_SUPPORT
             p->oscIF().oscShowGui(flag);
       #endif
@@ -2475,6 +2493,13 @@ void Pipeline::deleteGui(int idx)
          if(p->plugin() && p->pluginType() == MusEPlugin::PluginTypeLinuxVST)
          {
             ((VstNativePluginWrapper *)p->plugin())->showNativeGui(p, false);
+         }
+#endif
+
+#ifdef VST3_SUPPORT
+         if(p->plugin() && p->pluginType() == MusEPlugin::PluginTypeVST3)
+         {
+            ((Vst3PluginWrapper *)p->plugin())->showNativeGui(p, false);
          }
 #endif
   }
@@ -3376,6 +3401,18 @@ bool PluginI::setCustomData(const std::vector<QString>&
       }
    }
 #endif
+
+#ifdef VST3_SUPPORT
+   if(pluginType() == MusEPlugin::PluginTypeVST3)
+   {
+      Vst3PluginWrapper *vst3Plug = static_cast<Vst3PluginWrapper *>(_plugin);
+      for(int i = 0; i < instances; ++i)
+      {
+         if(vst3Plug->setCustomData(handle [i], customParams))
+           hasCustomData = true;
+      }
+   }
+#endif
    return hasCustomData;
 }
 
@@ -4072,6 +4109,18 @@ PluginConfiguration PluginI::getConfiguration() const
   }
 #endif
 
+#ifdef VST3_SUPPORT
+  if(pluginType() == MusEPlugin::PluginTypeVST3)
+  {
+    //for multi-instance plugins write only first instance's state
+    if(instances > 0)
+    {
+        Vst3PluginWrapper *vst3Plug = static_cast<Vst3PluginWrapper *>(_plugin);
+        conf._accumulatedCustomParams.push_back(vst3Plug->getCustomConfiguration(handle[0]));
+    }
+  }
+#endif
+
   //==============================
   // Plugin controls or parameters
   //==============================
@@ -4153,6 +4202,7 @@ void PluginI::configure(const PluginConfiguration& config, ConfigureOptions_t op
       case MusEPlugin::PluginTypeUnknown:
       case MusEPlugin::PluginTypeLADSPA:
       case MusEPlugin::PluginTypeVST:
+      case MusEPlugin::PluginTypeVST3:
       case MusEPlugin::PluginTypeDSSI:
       case MusEPlugin::PluginTypeDSSIVST:
       case MusEPlugin::PluginTypeLinuxVST:
@@ -4444,6 +4494,17 @@ PluginIBase::showNativeGui();
     return;
   }
 #endif
+
+#ifdef VST3_SUPPORT
+  if(pluginType() == MusEPlugin::PluginTypeVST3)
+  {
+    if(((Vst3PluginWrapper *)plugin())->nativeGuiVisible(this))
+       ((Vst3PluginWrapper *)plugin())->showNativeGui(this, false);
+    else
+       ((Vst3PluginWrapper *)plugin())->showNativeGui(this, true);
+    return;
+  }
+#endif
   #ifdef OSC_SUPPORT
   if (_plugin)
   {
@@ -4474,6 +4535,14 @@ void PluginI::showNativeGui(bool flag)
     return;
   }
 #endif
+
+#ifdef VST3_SUPPORT
+  if(pluginType() == MusEPlugin::PluginTypeVST3)
+  {
+    ((Vst3PluginWrapper *)plugin())->showNativeGui(this, flag);
+    return;
+  }
+#endif
   #ifdef OSC_SUPPORT
   if(_plugin)
   {
@@ -4495,6 +4564,10 @@ bool PluginI::nativeGuiVisible() const
 #ifdef VST_NATIVE_SUPPORT
     if(pluginType() == MusEPlugin::PluginTypeLinuxVST)
       return ((VstNativePluginWrapper *)plugin())->nativeGuiVisible(this);
+#endif
+#ifdef VST3_SUPPORT
+    if(pluginType() == MusEPlugin::PluginTypeVST3)
+      return ((Vst3PluginWrapper *)plugin())->nativeGuiVisible(this);
 #endif
   #ifdef OSC_SUPPORT
   return _oscif.oscGuiVisible();
@@ -4546,6 +4619,10 @@ void PluginI::updateNativeGuiWindowTitle()
 #ifdef VST_NATIVE_SUPPORT
     if(pluginType() == MusEPlugin::PluginTypeLinuxVST)
       ((VstNativePluginWrapper *)plugin())->updateNativeGuiWindowTitle(this);
+#endif
+#ifdef VST3_SUPPORT
+    if(pluginType() == MusEPlugin::PluginTypeVST3)
+      ((Vst3PluginWrapper *)plugin())->updateNativeGuiWindowTitle(this);
 #endif
 }
 

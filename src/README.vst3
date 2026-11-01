@@ -1,0 +1,327 @@
+VST3 support for MusE: findings and implementation plan
+=======================================================
+
+Status: steps 1 (headless host), 2 (plugin GUI in Qt5/X11), 3 (scanning and plugin cache, with the
+build option from step 4), 5 (effect plugins in MusE) and 6 (instruments) are done. Steps 1 and 2 live
+in vst3/, steps 3, 5 and 6 are in MusE itself. Step 7 (polish) is partly done: offline mode, auxiliary
+buses, sidechain and the note id / note expression layer. What is left is listed there.
+
+
+FINDINGS
+--------
+
+License
+  The VST3 SDK has been MIT licensed since 3.8.0 (October 2025). Earlier versions were
+  proprietary or GPLv3. MIT code can be linked into MusE (GPL v2 or later) without
+  problems. Keep the SDK copyright and license text when bundling it.
+
+SDK on Linux (verified by building and running it, SDK 3.8.1)
+  * CMake based. The SDK repo needs the vstgui4 submodule only when VSTGUI is enabled;
+    we turn it off (SMTG_ENABLE_VSTGUI_SUPPORT=OFF) and build no examples.
+  * The hosting code is in public.sdk/source/vst/hosting: Module (loads .vst3 bundles and
+    reads the factory), PlugProvider (creates component + controller and connects them),
+    HostApplication, EventList, ParameterChanges, ProcessData, pluginterfacesupport.
+  * The CMake target sdk_hosting does NOT contain module_linux.cpp or plugprovider.cpp,
+    the SDK's own host examples add them to their source lists. We do the same.
+  * Same for MemoryStream (public.sdk/source/common/memorystream.cpp).
+  * The SDK's editorhost example does support Linux (X11 via GTK3/gtkmm, optional
+    Wayland preview). The vcpkg manifest that marks hosting examples as unsupported on
+    Linux is only a packaging limitation.
+  * Module::getModulePaths() already knows ~/.vst3, /usr/lib/vst3, /usr/local/lib/vst3.
+
+Result of the proof of concept, with real plugins (Surge XT, Surge XT Effects, u-he Diva)
+  Scanning, instantiation, bus setup, processing, note events, parameters and state
+  save/load all work through the SDK hosting classes. Nothing from MusE or Qt is needed
+  for that part.
+
+MusE side (existing code that VST3 would plug into)
+  * Plugins:      muse/plugin.h  (Plugin, PluginI, PluginIBase, Pipeline)
+  * Synths:       muse/synth.h   (Synth, SynthIF, SynthI)
+  * VST2 as the closest model: muse/vst_native.{h,cpp}
+      VstNativeSynth, VstNativeSynthIF (instrument), VstNativePluginWrapper (effect).
+  * Scanning and the plugin cache: libs/plugin/plugin_scan.{h,cpp}, plugin_cache_*.
+    Has PluginTypeVST / PluginTypeLinuxVST but no VST3 type.
+  * Build: CMakeLists.txt has ENABLE_VST_NATIVE and the bundled vestige header.
+  * Threading rule: the GUI must not change song data directly. It goes through
+    PendingOperationList (muse/operations.h), see README.developer.undo_system.
+
+Main difficulties, in rough order of effort
+  1. Plugin GUIs: IPlugView on X11 needs an IRunLoop (file descriptor and timer handlers)
+     from the host and IPlugFrame::resizeView. Embedding into Qt5 is the main Linux risk.
+     (Not yet tried, see step 2.)
+  2. Parameters: VST3 has no MIDI controllers. MIDI CC, pitch bend and program change
+     must be mapped through IMidiMapping (and IUnitInfo for programs). Edits made in the
+     plugin GUI arrive through IComponentHandler on the GUI thread and have to reach the
+     realtime thread without locks or allocation. The PoC uses a mutex, that must go.
+  3. Buses: MusE ports are a flat list, VST3 has buses with speaker arrangements.
+     Initially: main bus only, auxiliary buses inactive (what the PoC does).
+  4. Events: notes with noteId, note expression, per-note controllers. Start with plain
+     note on/off, aftertouch, CC through IMidiMapping.
+  5. Threading model: controller on the GUI thread, processor on the realtime thread.
+     Plugins that are one object (component also controller) need care.
+  6. State: component state + controller state in the song XML (as base64 chunk, like the
+     VST2 chunks).
+  7. Latency, tail and bypass: map getLatencySamples, getTailSamples and the kIsBypass
+     parameter to MusE's PluginLatencyReportingType / PluginBypassType.
+  8. Scan safety: plugins crash or hang while loading. The scan should run out of process
+     (MusE already has a scan-info cache to keep results).
+
+
+PLAN
+----
+
+Step 1: headless proof of concept                                              DONE
+  vst3/vst3host.{h,cpp}  Scan, load, setup, process, notes, params, state.
+  vst3/vst3probe.cpp     list / params / render (can write a WAV).
+  vst3/tests             15 tests against real installed plugins, run with ctest.
+  Exit criteria: load a real instrument and effect and get correct audio. Met.
+
+Step 2: plugin GUI in Qt5 on X11                                               DONE
+  vst3/vst3editor.{h,cpp}  Editor, a QWidget hosting IPlugView; QtFrame (IPlugFrame +
+                           Linux::IRunLoop on QSocketNotifier / QTimer).
+  vst3/vst3gui.cpp         Opens a plugin's editor, keeps it processing, prints GUI edits.
+  vst3/tests/vst3_gui_tests.cpp  Needs a display and plugins, skipped (77) without.
+  Results with Surge XT, Surge XT Effects and Diva: the editors open at the size the plugin
+  asks for, the plugin's X window is mapped inside ours with the same size, open/close
+  cycles and destruction order are clean, resizing works (including plugins that keep an
+  aspect ratio, which needs the host to resize to what checkSizeConstraint returns), and
+  a synthetic mouse drag in the editor produced a parameter edit through IComponentHandler.
+  Original plan text:
+  Open IPlugView in a QWindow/QWidget (XEmbed or a foreign window), implement IRunLoop
+  (QSocketNotifier + QTimer) and IPlugFrame::resizeView, and IComponentHandler edits shown
+  in a small Qt test window with the parameter list. Still stand-alone (vst3/).
+  Exit criteria: Surge XT and Diva editors open, are usable and close cleanly, repeatedly.
+  Then decide on Wayland. Under Wayland run through XWayland first.
+
+Step 3: scanning and the plugin cache in MusE                                  DONE
+  What it does: MusE finds *.vst3 bundles in ~/.vst3, /usr/local/lib(64)/vst3 and
+  /usr/lib(64)/vst3 (or in $VST3_PATH, colon separated), scans every bundle in the existing
+  'muse_plugin_scan' sandbox program, and keeps the result in <scanner dir>/vst3_plugins.scan
+  like the other plugin types. Changes (new, removed or modified bundles) are detected as for
+  the other types, a bundle that cannot be scanned ends up in unknown_plugins.scan so it is
+  not tried again every time. VST3 entries in the plugin list are ignored by the plugin and
+  synth dialogs for now.
+  Changes:
+    libs/plugin/plugin_scan.{h,cpp}   PluginTypeVST3 (0x100), string "VST3", part of PluginTypesAll.
+    libs/plugin/plugin_cache_reader   pluginGetVst3Directories(), pluginVst3BundleTime(),
+                                      cache file name, existence check and reading.
+    libs/plugin/plugin_cache_writer   collecting bundles, scanVst3Plugins() (runs the sandbox
+                                      program per bundle), cache creation and dirty check.
+    sandbox/vst3_scan.{h,cpp}         writeVst3Info(): uses the vst3/vst3host code to create every
+                                      audio class in a bundle, set it up, and write a scan entry.
+    sandbox/muse_plugin_scan.cpp      Handles *.vst3 paths when the VST3 type is asked for.
+    muse/main.cpp, globals            -3 command line option (don't load VST3), loadVST3.
+    muse/*.cpp, synti/                'case PluginTypeVST3' where the plugin types are switched on.
+  Mapping of the scan entry: _uri = class id (32 hex), _label/_name = class name, _maker = vendor,
+  _description = sub categories ("Instrument|Synth"), class Instrument and/or Effect, audio ports =
+  channels of the main buses, control in ports = visible writable parameters (not program change),
+  control out ports = read-only parameters, event in port if it takes notes, bypass port if a
+  parameter is flagged bypass, flags HasGui (an editor view exists), HasChunks, SupportsTimePosition.
+  Control values are normalized 0..1 in the scan, conversion to plain values is for step 5.
+  Time stamp of a bundle = newest file in Contents/<arch>/ (the directory's own stamp does not
+  change when the library inside is replaced), see setPluginScanFileInfo().
+  The first start after enabling VST3 rescans all plugin types, because MusE recreates all cache
+  files when one is missing.
+  Tests: libs/plugin/tests/vst3_cache_test.cpp (ctest -R vst3_cache) drives the real cache code
+  and sandbox program in a temporary directory.
+
+Step 4: build integration                                    PARTLY DONE (needed by step 3)
+  Done: ENABLE_VST3 option (default OFF) and VST3_SDK_PATH in CMakeLists.txt, VST3_SUPPORT in
+  config.h, the SDK libraries are built from the SDK checkout, muse_vst3host is a static library
+  made in sandbox/CMakeLists.txt from vst3/vst3host.cpp. Still to do: a vendored copy of the SDK
+  sources, packaging, a default for ENABLE_VST3 and moving vst3host out of vst3/ into muse/.
+  Original text: ENABLE_VST3 option and VST3_SDK_PATH (or a vendored copy of the needed SDK sources:
+  base, pluginterfaces, public.sdk hosting and common). The code compiles out cleanly
+  with VST3_SUPPORT undefined, like LV2 and VST2. Move vst3host into muse/ (or a module).
+
+Step 5: effects                                                                DONE
+  VST3 effects can be put in the effects rack of a track, from the plugin dialog (type "VST3").
+  muse/vst3.{h,cpp}   Vst3PluginWrapper (a Plugin, in the style of the VST2 and LV2 wrappers, with
+                      fake ladspa style ports) and Vst3PluginState (one instance, the 'handle' of a
+                      PluginI), initVST3() which makes the wrappers from the plugin cache.
+  What works: instantiate, activate (set up for the audio buffer size), process, control inputs
+  (values pushed to the plugin when they change, also from automation and the controller graphs),
+  read-only parameters as control outputs, bypass through the plugin's bypass parameter, latency
+  report, transport info (position, tempo, time signature, playing), state saved in and restored
+  from the song file (<customData>vst3-state:base64</customData>, control values follow the restored
+  state), the plugin's own editor window (Plugin 'N' button / nativeGuiVisible in the song), and
+  edits made in the editor going to the control values, automation recording (begin/edit/end) and
+  the processor.
+  Threads: apply() runs in the audio thread. It does not lock or allocate: parameter values are
+  staged in tables made when the instance was created (Instance::queueParamRT) and values for the
+  plugin's edit controller go to the main thread through a lock free ring (controllerUpdateRT,
+  applied by the heart beat in applyControllerUpdates). Edits from the plugin go the other way:
+  IComponentHandler -> Instance edit callback -> the IPC ring of PluginI -> control value ->
+  apply() -> processor. That is why the host side forwarding of edits is turned off.
+  Parameter values are normalized 0..1 (like VST2). Value to text conversion is left to the plugin
+  (its editor shows it). Stepped parameters are linear 0..1 in MusE. A toggle (step count 1) is a
+  check box.
+  Port numbering: audio inputs, audio outputs, control inputs, control outputs, the same as in the
+  scan. Instance::inputControls() / outputControls() are used by both, so they cannot disagree. If
+  the plugin no longer matches the cache the plugin is not instantiated ("rescan the plugins").
+  Known limitations:
+    * activate() sets the plugin up in the audio thread, as the other plugin types do.
+    * Only the main audio buses, no sidechain. No MIDI/note input to effects.
+    * The plugin editor needs Qt's xcb platform (X11 or XWayland). With another Qt platform, for
+      example native Wayland, the editor button is still there but shows an information dialog that
+      says to start MusE with QT_QPA_PLATFORM=xcb.
+    * An edit controller that changes many values at once (kParamValuesChanged) is followed by
+      reading all parameters; plugins that never say so are not followed until the next edit.
+    * Channel counts: a plugin whose main buses are not what the cache says is passed through.
+  Diagnostics, with the -D option: what is instantiated and activated, the first block, the output
+  peak, every control value sent to the plugin and every edit seen. MUSE_VST3_TEST_TONE=1 replaces the
+  input of the plugin by a 220 Hz sine (for trying without an audio source), and MUSE_VST3_TEST_EDIT=1
+  makes the wrapper act as if the plugin reported an edit of its last control.
+  How it was tried: a song with the Surge XT Effects plugin on the first output track, run with
+  "muse4 -a -D song.med" (Qt xcb): instantiate, activate (512 samples at 44100 Hz), audio flowing
+  (output peak 0.238 for a 0.25 input), control values from the song reach the plugin and change the
+  sound (peak 0.254), the state made by "vst3probe state" is restored (the controls take the
+  values set when it was made), the editor opens inside MusE (600 x 490, same as stand-alone), and
+  an edit event reaches the processor through the control value. A real mouse click in the editor
+  inside MusE could not be tested here: synthetic X events are not delivered reliably by this
+  compositor (see the notes of step 2). The editor and its edit callback are tested stand-alone.
+  To make a song file for a test, the plugin goes in the track like this (inside <AudioTrack>):
+      <plugin><type>VST3</type><uri>CLASS ID FROM "vst3probe list"</uri><label>NAME</label>
+      <name>NAME</name><active>1</active><on>1</on><nativeGuiVisible>1</nativeGuiVisible></plugin>
+  Run MusE with APPDIR set to a directory that has usr/local/bin/muse_plugin_scan if the scanner
+  that is installed does not match this build (MusE starts the scanner by its installed path).
+
+Step 6: instruments                                                            DONE
+  VST3 instruments can be made as synth tracks (synth dialog, type "VST3"), with the plugin's editor,
+  programs, state and automation. Effects can still be used as a synth track like the other plugin
+  types do. muse/vst3.{h,cpp}: Vst3Synth (a Synth) and Vst3SynthIF (a SynthIF, one instance on a track).
+  Host side additions (vst3/vst3host.*), all usable from the audio thread: noteOn/noteOff with sample
+  offsets, polyPressure, midiController() (MIDI controllers go to parameters through IMidiMapping,
+  pitch bend and channel pressure are controllers 129 and 128, as in the VST3 specification),
+  queueParamAtRT() for sample accurate parameter points, programCount/programName/selectProgramRT()
+  (the program list of the program change parameter, through IUnitInfo).
+  Midi events (MusE's events of the track, from playback and from the user) are cut into slices
+  together with the automation controllers like the other synths do, and the events of a slice go to
+  the plugin with their frame inside the slice. Notes, controllers, pitch bend, channel and poly
+  pressure, program changes (program numbers are numbered in a row: bank high bits are the upper
+  bits, so a list with more than 128 programs works) and control changes (to the plugin's own
+  parameters if it maps them) are handled.
+  The control values of the plugin (automation, the editor, programs that change them) work as for
+  effects: the values are in the Port array of the instance, the audio thread tells the plugin what
+  changed and the editor follows, edits from the editor come back through the IPC ring.
+  Port counts: audio out = channels of the main output bus, audio in = channels of the main input bus
+  (instruments with an input are given audio from the routes of the track). Other buses are inactive.
+  Diagnostics, with the -D option: activation, output peak and a rough pitch (zero crossings) about
+  every two seconds, program selection, state restore. MUSE_VST3_TEST_NOTE=1 plays middle C through
+  MusE's own midi event path after a few seconds, selects program 3, bends the note up with a pitch bend
+  event and stops it.
+  How it was tried, with songs that have a synth track on midi port 1 (see below), "muse4 -a -D":
+    Surge XT: peak 0.21 at 261.6 Hz for middle C, 293.4 Hz after the pitch bend (+2 semitones through
+    the IMidiMapping), silence after the note off; 'program 3 is not there' (it has no programs);
+    state restore (the controls take the values made with vst3probe state); editor opens (1141 x 711)
+    Diva: program 3 selected through the program list (the sound changes), latency 16 reported.
+  A synth track in a song file (after </AudioTrack> inside <SynthI>):
+      <type>VST3</type><uri>CLASS ID</uri><label>NAME</label><name>NAME</name><active>1</active><on>1</on>
+      <customData>vst3-state:...</customData><port>0</port><nativeGuiVisible>1</nativeGuiVisible>
+  Known limitations:
+    * No MIDI output of the plugin (arpeggiators, midi effects), no system exclusive messages, no note
+      expression or tuning, and notes get no note id (note offs find their note by channel and pitch).
+    * Only the main audio buses, so a multi-output instrument gives only its first bus.
+    * More than a handful of parameter changes for one parameter in one slice allocate in the plugin
+      host's value queue the first time (the queues are made with room for 5 points).
+    * The editor needs Qt's xcb platform, otherwise an information dialog is shown.
+
+Step 7: polish                                                        PARTLY DONE (see the list)
+  Done:
+  * Offline / freewheel: Instance::setOffline() tells the plugin that the processing is offline
+    (ProcessSetup.processMode kOffline). VST3 only allows that at set up time, so a running plugin is
+    set up again, from the audio thread like activate() is. Effects and instruments follow
+    MusEGlobal::audio->freewheel() at the start of every cycle and do the switch when it changes (exporting
+    or bouncing). Playing notes stop at the switch. The scan marks VST3 plugins with a freewheel
+    function (PluginFreewheelTypeFunction).
+  * Auxiliary output buses (instruments): Instance::SetupOptions::allOutputBuses activates all the audio
+    output buses. A synth track now has all the channels as outputs (totalOutChannels) and the main bus
+    as its own channels, so the other outputs can be routed from the synth like those of the VST2 and DSSI
+    synths. Tried with Surge XT (3 stereo buses) and Six Sines, Seven Outs (7 stereo buses, 14 channels,
+    MusE asks for 14 buffers). That plugin makes no sound with only its main bus on, which is one reason
+    to use all outputs. Effects (rack plugins) use the main buses only.
+  * Sidechain: SetupOptions::sidechainInputs activates the auxiliary input buses. For instruments (and effects
+    used on synth tracks) they are extra input channels of the synth track, so they are routed to it like
+    other audio inputs. The rack of a track has no sidechain routing in MusE, so effects in the rack
+    leave the sidechain bus off, which plugins handle (they use their own signal).
+  * Note expression: every note on gets a note id (Instance::noteOn returns it, note off, poly pressure
+    and expression use it, a note that is already on is ended first). Instance::noteExpression() sends a
+    value for the sounding note, noteExpressionTypes() lists what the plugin understands. Tried with Six
+    Sines (Panorama and Tuning): a tuning value for the note raised its pitch. MusE does not send note
+    expression values itself, see below.
+  Not done:
+  * Note expression from MusE: MusE's notes have no per note pitch, pressure or timbre, so there is nothing
+    to send. What it takes is MPE (MIDI polyphonic expression): one note per MIDI channel, and the pitch
+    bend, pressure and CC 74 of that channel become the tuning, volume/pressure and brightness of that note.
+    That needs a setting per synth track (the MPE zone and the bend range) and care for the existing
+    channel handling. It is a feature of its own.
+  * MIDI output of plugins, native Wayland (for later, with Qt6).
+  * Parameter values in real units (they are still normalized), 64 bit processing, sample accurate
+    handling of repeated parameter changes in effects, drag and drop of presets.
+  Diagnostics, with -D: MUSE_VST3_TEST_FREEWHEEL=1 makes an effect or instrument offline for a while, and
+  a line says when the mode changes. The bus layout of an instrument is printed when it is made.
+
+Each step should leave MusE building and releasable. Steps 1 to 2 carry the technical
+risk, so they come first.
+
+
+Notes from step 2
+  * Qt5 must use the xcb platform plugin, also on Wayland (runs through XWayland).
+    vst3gui and the GUI tests set QT_QPA_PLATFORM=xcb when it is not set. In MusE the
+    application already decides that for the whole process, so a native Wayland MusE
+    would not be able to host VST3 editors until the SDK's Wayland support is used.
+  * Plugins use the run loop differently: Surge registers 2 file descriptors, Diva a
+    timer and a file descriptor. Both are served by the Qt event loop.
+  * The plugin's editor must be closed (view removed, frame cleared) before the plugin
+    instance is destroyed. Editor::closeView() does that, the Editor destructor too.
+  * Screenshots with QScreen::grabWindow are black for XWayland windows, so the tests check
+    the X window tree instead (XQueryTree) rather than pixels.
+  * The synthetic click test depends on the compositor delivering XTest input. When it is
+    not delivered the test only warns (VST3_TEST_REQUIRE_CLICK=1 makes it an error). Moving
+    the mouse over the test window while it runs can make it miss.
+  * Not done: keyboard focus handling (XEMBED focus), content scale factor, plugins that
+    open extra top level windows or popups, drag and drop.
+
+
+TRYING STEP 5
+-------------
+
+  See the end of step 5 above for a test song. Needs a display, Qt xcb, and VST3_PATH if the plugins
+  are not in the standard places. Do not run several MusE instances at once when trying the editor.
+  vst3probe state "Surge XT Effects" --set 849359077=0.8 --out state.txt   # makes <customData> text
+
+TRYING STEP 3
+-------------
+
+  cd build_dir     # out of source, for instance build_vst3
+  cmake -DCMAKE_BUILD_TYPE=release -DMODULES_BUILD_STATIC=ON -DENABLE_VST3=ON \
+        -DVST3_SDK_PATH=$HOME/dev/vst3sdk ..
+  make -j8 muse_plugin_scan vst3_cache_test
+  ctest -R vst3_cache --output-on-failure      # needs VST3 plugins in the standard places
+  # scan one bundle by hand (-t256 is PluginTypeVST3, the output file must exist):
+  touch /tmp/scan.xml
+  ./sandbox/muse_plugin_scan -t256 -f "/usr/local/lib/vst3/Surge XT.vst3" -o /tmp/scan.xml -p
+
+TRYING STEP 1
+-------------
+
+  cd vst3
+  cmake -S . -B build -DVST3_SDK_PATH=/path/to/vst3sdk     # default is ~/dev/vst3sdk
+  cmake --build build -j
+  ./build/vst3probe list
+  ./build/vst3probe params "Surge XT"
+  ./build/vst3probe render "Surge XT" --note 60 --seconds 3 --wav /tmp/out.wav
+  ctest --test-dir build --output-on-failure
+
+  Step 2, the plugin editor (needs Qt5 Widgets and a display):
+  ./build/vst3gui "Surge XT"                       # opens the editor, hold the button to play C4
+  ./build/vst3gui Diva --seconds 10 --wav /tmp/gui.wav
+
+  Get the SDK:  git clone --recurse-submodules https://github.com/steinbergmedia/vst3sdk
+  (the submodule is not needed, since VSTGUI is switched off; plain clone is enough).
+
+  Tests use the plugins found in the standard locations. Environment variables:
+    VST3_TEST_DIRS=dir1:dir2        where to look
+    VST3_TEST_INSTRUMENT=name       instrument to test with (default: the first found)
+    VST3_TEST_EFFECT=name           effect to test with (default: the first found)
+  Without any installed plugin the tests report "skipped".

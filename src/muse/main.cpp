@@ -76,6 +76,7 @@
 #include "midiport.h"
 #include "mididev.h"
 #include "plugin.h"
+#include "vst3.h"
 #include "wavepreview.h"
 #include "plugin_cache_writer.h"
 #include "pluglist.h"
@@ -395,6 +396,10 @@ CommandLineParseResult parseCommandLine(
   QCommandLineOption option_2("2", QCoreApplication::translate("main", "Don't load LV2 plugins"));
   parser.addOption(option_2);
 #endif
+#ifdef VST3_SUPPORT
+  QCommandLineOption option_3("3", QCoreApplication::translate("main", "Don't load VST3 plugins"));
+  parser.addOption(option_3);
+#endif
 #ifdef HAVE_LASH
   QCommandLineOption option_L("L", QCoreApplication::translate("main", "Don't use LASH"));
   parser.addOption(option_L);
@@ -574,6 +579,11 @@ CommandLineParseResult parseCommandLine(
 #ifdef VST_NATIVE_SUPPORT
   if(parser.isSet(option_N))
     MusEGlobal::loadNativeVST = false;
+#endif
+
+#ifdef VST3_SUPPORT
+  if(parser.isSet(option_3))
+    MusEGlobal::loadVST3 = false;
 #endif
 
 #ifdef DSSI_SUPPORT
@@ -1344,6 +1354,10 @@ int main(int argc, char* argv[])
           types |= MusEPlugin::PluginTypeVST;
         if(MusEGlobal::loadNativeVST)
           types |= MusEPlugin::PluginTypeLinuxVST;
+#ifdef VST3_SUPPORT
+        if(MusEGlobal::loadVST3)
+          types |= MusEPlugin::PluginTypeVST3;
+#endif
         if(MusEGlobal::loadDSSI)
           types |= (MusEPlugin::PluginTypeDSSI |
                     MusEPlugin::PluginTypeDSSIVST);
@@ -1638,6 +1652,11 @@ int main(int argc, char* argv[])
 
         if (MusEGlobal::loadNativeVST)
               MusECore::initVST_Native();
+
+#ifdef VST3_SUPPORT
+        if (MusEGlobal::loadVST3)
+              MusECore::initVST3();
+#endif
 
         qDebug() << "->" << qPrintable(QTime::currentTime().toString("hh:mm:ss.zzz"))
                  << "Init DSSI plugins...";

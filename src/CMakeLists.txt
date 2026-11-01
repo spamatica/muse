@@ -235,6 +235,7 @@ option ( ENABLE_DSSI         "Enable Disposable Soft Synth Interface (dssi) (OSC
 
 option ( ENABLE_VST_NATIVE   "Enable Native VST support (see ENABLE_VST_VESTIGE and VST_HEADER_PATH)" ON)
 option ( ENABLE_VST_VESTIGE  "Set VST header type is Vestige"                                         ON)
+option ( ENABLE_VST3         "Enable VST3 plugin scanning (needs the VST3 SDK, see VST3_SDK_PATH and README.vst3)" OFF)
 option ( ENABLE_LV2          "Enable LV2 plugins and synths support" ON)
 option ( ENABLE_LV2_GTK2     "Enable LV2 user interface GTK2 support" ON)
 
@@ -568,6 +569,29 @@ endif (ENABLE_VST_NATIVE)
 
 # find_file creates a cached variable. We don't want VST_HEADER_CHECK cached.
 UNSET (VST_HEADER_CHECK CACHE)
+
+##
+## VST3 support
+## The VST3 SDK is MIT licensed since version 3.8. Only its libraries are built, no examples nor VSTGUI.
+##
+
+set (VST3_SUPPORT FALSE)
+set (VST3_SDK_PATH "" CACHE PATH "Path to a checkout of https://github.com/steinbergmedia/vst3sdk (3.8 or later)")
+if (ENABLE_VST3)
+      if (EXISTS "${VST3_SDK_PATH}/CMakeLists.txt" AND EXISTS "${VST3_SDK_PATH}/public.sdk/source/vst/hosting/module.h")
+            set (SMTG_ENABLE_VST3_PLUGIN_EXAMPLES OFF CACHE BOOL "" FORCE)
+            set (SMTG_ENABLE_VST3_HOSTING_EXAMPLES OFF CACHE BOOL "" FORCE)
+            set (SMTG_ENABLE_VSTGUI_SUPPORT OFF CACHE BOOL "" FORCE)
+            add_subdirectory (${VST3_SDK_PATH} vst3sdk EXCLUDE_FROM_ALL)
+            message("VST3 support enabled")
+            enable_testing()
+            set (VST3_SUPPORT TRUE)
+      else ()
+            message("VST3 support disabled: VST3_SDK_PATH does not point to the VST3 SDK: '${VST3_SDK_PATH}'")
+      endif ()
+else (ENABLE_VST3)
+      message("VST3 support disabled")
+endif (ENABLE_VST3)
 
 if (ENABLE_VST_VESTIGE)
   SET (VST_VESTIGE_SUPPORT TRUE)
@@ -998,6 +1022,7 @@ if(LV2_SUPPORT)
 endif(LV2_SUPPORT)
 #summary_add("VST support" VST_SUPPORT)
 summary_add("Native VST support" VST_NATIVE_SUPPORT)
+summary_add("VST3 support" VST3_SUPPORT)
 summary_add("Fluidsynth support" HAVE_FLUIDSYNTH)
 summary_add("RubberBand support" RUBBERBAND_SUPPORT)
 #~ summary_add("Zita Resampler support" ZITA_RESAMPLER_SUPPORT)

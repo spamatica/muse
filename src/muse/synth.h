@@ -267,6 +267,7 @@ class SynthI : public AudioTrack, public MidiDevice,
 	    friend class LV2SynthIF;
       friend class VstSynthIF;
       friend class VstNativeSynthIF;
+      friend class Vst3SynthIF;
       friend class MetronomeSynthIF;
 
       SynthI();

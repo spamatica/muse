@@ -31,6 +31,8 @@
 // For sorting port enum values.
 #include <map>
   
+#include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <cstdlib>
 
@@ -77,6 +79,9 @@ void setPluginScanFileInfo(const QString& filename, PluginScanInfoStruct* info)
 //  info->_absolutePath     = PLUGIN_SET_QSTRING(fi.absolutePath());
 //  info->_path             = PLUGIN_SET_QSTRING(fi.path());
   info->_fileTime         = fi.lastModified().toMSecsSinceEpoch();
+  // The time stamp of a VST3 bundle directory does not follow changes to the library inside it.
+  if(fi.suffix() == QLatin1String("vst3"))
+    info->_fileTime = pluginVst3BundleTime(filename);
 }
 
 //---------------------------------------------------------
@@ -610,6 +615,63 @@ QStringList pluginGetLinuxVstDirectories()
 }
 
 //---------------------------------------------------------
+//   pluginGetVst3Directories VST3 bundles (*.vst3)
+//   The standard locations from the VST3 specification,
+//    or the colon separated VST3_PATH environment variable.
+//---------------------------------------------------------
+
+QStringList pluginGetVst3Directories()
+{
+  QStringList sl;
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 10, 0))
+  const QString vst3Path = qEnvironmentVariable("VST3_PATH");
+#else
+  const QString vst3Path = QString::fromLocal8Bit(qgetenv("VST3_PATH"));
+#endif
+  if(!vst3Path.isEmpty())
+    return vst3Path.split(QLatin1Char(':'), QString::SkipEmptyParts);
+
+  const QString homePath = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+  if(!homePath.isEmpty())
+    sl << homePath + QString("/.vst3");
+  sl << QString("/usr/local/lib/vst3")
+     << QString("/usr/local/lib64/vst3")
+     << QString("/usr/lib/vst3")
+     << QString("/usr/lib64/vst3");
+  return sl;
+}
+
+//---------------------------------------------------------
+//   pluginVst3BundleTime
+//   The time stamp to use for a VST3 bundle, in milliseconds since epoch.
+//   The time stamp of a bundle directory does not change when the
+//    library inside it is replaced, so use the newest file found in
+//    Contents/<architecture>/ . A plain file is used as it is.
+//   Returns 0 if the bundle does not exist.
+//---------------------------------------------------------
+
+std::int64_t pluginVst3BundleTime(const QString& bundlePath)
+{
+  const QFileInfo bfi(bundlePath);
+  if(!bfi.exists())
+    return 0;
+  if(!bfi.isDir())
+    return bfi.lastModified().toMSecsSinceEpoch();
+
+  std::int64_t t = 0;
+  const QDir contents(bundlePath + QString("/Contents"));
+  const QFileInfoList archs = contents.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+  for(const QFileInfo& arch : archs)
+  {
+    const QFileInfoList files = QDir(arch.filePath()).entryInfoList(QDir::Files);
+    for(const QFileInfo& f : files)
+      t = std::max<std::int64_t>(t, f.lastModified().toMSecsSinceEpoch());
+  }
+  // A bundle without a library inside it: fall back to the directory itself.
+  return t ? t : bfi.lastModified().toMSecsSinceEpoch();
+}
+
+//---------------------------------------------------------
 //   pluginGetVstDirectories Win vst plugins (*.dll)
 //---------------------------------------------------------
 
@@ -709,6 +771,10 @@ QStringList pluginGetDirectories(const QString& museGlobalLib, MusEPlugin::Plugi
       return pluginGetVstDirectories();
     break;
 
+    case MusEPlugin::PluginTypeVST3:
+      return pluginGetVst3Directories();
+    break;
+
     case MusEPlugin::PluginTypeMETRONOME:
     case MusEPlugin::PluginTypeUnknown:
     case MusEPlugin::PluginTypeNone:
@@ -752,6 +818,10 @@ const char* pluginCacheFilename(MusEPlugin::PluginType type)
 
     case MusEPlugin::PluginTypeVST:
       return "vst_plugins.scan";
+    break;
+
+    case MusEPlugin::PluginTypeVST3:
+      return "vst3_plugins.scan";
     break;
     
     case MusEPlugin::PluginTypeUnknown:
@@ -811,6 +881,9 @@ MusEPlugin::PluginTypes_t pluginCacheFilesExist(
 
   if(types & MusEPlugin::PluginTypeVST)
     res |= pluginCacheFileExists(path, MusEPlugin::PluginTypeVST);
+
+  if(types & MusEPlugin::PluginTypeVST3)
+    res |= pluginCacheFileExists(path, MusEPlugin::PluginTypeVST3);
 
   if(types & MusEPlugin::PluginTypeUnknown)
     res |= pluginCacheFileExists(path, MusEPlugin::PluginTypeUnknown);
@@ -912,6 +985,12 @@ bool readPluginCacheFiles(
   if(types & MusEPlugin::PluginTypeVST)
   {
     if(!readPluginCacheFile(path, list, readPorts, readEnums, MusEPlugin::PluginTypeVST))
+      res = false;
+  }
+
+  if(types & MusEPlugin::PluginTypeVST3)
+  {
+    if(!readPluginCacheFile(path, list, readPorts, readEnums, MusEPlugin::PluginTypeVST3))
       res = false;
   }
 

@@ -1858,6 +1858,73 @@ void scanLinuxVSTPlugins(PluginScanList* /*list*/, bool /*scanPorts*/, bool /*de
 }
 #endif // VST_NATIVE_SUPPORT
 
+//---------------------------------------------------------
+//   collectVst3Bundles
+//   Finds VST3 bundles (directories, or plain files, named *.vst3)
+//    in a directory tree. Does not look inside the bundles.
+//   This might be called recursively!
+//---------------------------------------------------------
+
+#ifdef VST3_SUPPORT
+static void collectVst3Bundles(const QString& dirname, QStringList& bundles,
+                               // Only for recursions, original top caller should not touch!
+                               int recurseLevel = 0)
+{
+  const int max_levels = 10;
+  if(recurseLevel >= max_levels)
+  {
+    std::fprintf(stderr, "collectVst3Bundles: Ignoring too-deep directory level (max:%d) at:%s\n",
+                 max_levels, dirname.toLocal8Bit().constData());
+    return;
+  }
+
+  // A path in the list of directories can also be a bundle itself.
+  if(recurseLevel == 0 && QFileInfo(dirname).suffix() == QLatin1String("vst3") && QFileInfo(dirname).exists())
+  {
+    bundles.append(dirname);
+    return;
+  }
+
+  const QDir dir(dirname);
+  if(!dir.exists())
+    return;
+
+  const QFileInfoList fi_list = dir.entryInfoList(
+    QDir::Files | QDir::AllDirs | QDir::NoDotAndDotDot, QDir::Name | QDir::IgnoreCase);
+  for(const QFileInfo& fi : fi_list)
+  {
+    if(fi.suffix() == QLatin1String("vst3"))
+      bundles.append(fi.filePath());
+    else if(fi.isDir())
+      // RECURSIVE!
+      collectVst3Bundles(fi.filePath(), bundles, recurseLevel + 1);
+  }
+}
+
+//---------------------------------------------------------
+//   scanVst3Plugins
+//   Every bundle is scanned in the 'sandbox' program, like
+//    the other plugin types, so that a plugin which crashes
+//    or hangs cannot take the application with it.
+//---------------------------------------------------------
+
+void scanVst3Plugins(PluginScanList* list, bool scanPorts, bool debugStdErr)
+{
+  QStringList bundles;
+  const QStringList sl = pluginGetVst3Directories();
+  for(const QString& d : sl)
+    collectVst3Bundles(d, bundles);
+  bundles.removeDuplicates();
+
+  for(const QString& bundle : bundles)
+    pluginScan(bundle, MusEPlugin::PluginTypeVST3, list, scanPorts, debugStdErr);
+}
+#else
+void scanVst3Plugins(PluginScanList* /*list*/, bool /*scanPorts*/, bool /*debugStdErr*/)
+{
+}
+#endif // VST3_SUPPORT
+
 #ifdef LV2_USE_PLUGIN_CACHE
 #ifdef LV2_SUPPORT
 
@@ -2679,6 +2746,10 @@ void scanAllPlugins(
     // Now do LinuxVST plugins...
     scanLinuxVSTPlugins(list, scanPorts, debugStdErr);
 
+  if(types & (MusEPlugin::PluginTypeVST3))
+    // Now do VST3 plugins...
+    scanVst3Plugins(list, scanPorts, debugStdErr);
+
 // SPECIAL for LV2: No need for a cache file. Do not create one here. Read directly into the list later.
 //   if(types & (MusEPlugin::PluginTypeLV2))
 //     // Now do LV2 plugins...
@@ -2798,6 +2869,26 @@ static void findLinuxVSTPluginFiles(filepath_set& /*fplist*/, bool /*debugStdErr
 }
 #endif // VST_NATIVE_SUPPORT
 
+
+//---------------------------------------------------------
+//   findVst3PluginFiles
+//---------------------------------------------------------
+
+#ifdef VST3_SUPPORT
+static void findVst3PluginFiles(filepath_set& fplist, bool /*debugStdErr*/)
+{
+  QStringList bundles;
+  const QStringList sl = pluginGetVst3Directories();
+  for(const QString& d : sl)
+    collectVst3Bundles(d, bundles);
+  for(const QString& bundle : bundles)
+    fplist.insert(filepath_set_pair(bundle, pluginVst3BundleTime(bundle)));
+}
+#else // Not VST3_SUPPORT
+static void findVst3PluginFiles(filepath_set& /*fplist*/, bool /*debugStdErr*/)
+{
+}
+#endif // VST3_SUPPORT
 
 // SPECIAL for LV2: No need for a cache file.
 // Do not find and compare LV2 library files here.
@@ -2952,6 +3043,12 @@ static void findPluginFiles(const QString& museGlobalLib,
     findLinuxVSTPluginFiles(fplist, debugStdErr);
   }
 
+  if(types & (MusEPlugin::PluginTypeVST3))
+  {
+    // Now do VST3 plugins...
+    findVst3PluginFiles(fplist, debugStdErr);
+  }
+
   // SPECIAL for LV2: No need for a cache file.
   // Do not find and compare LV2 library files here.
   // This caused problems with identically named plugins
@@ -3078,6 +3175,10 @@ bool createPluginCacheFiles(
   if(types & MusEPlugin::PluginTypeMESS)
     createPluginCacheFile(path, MusEPlugin::PluginTypeMESS, list, writePorts,
       museGlobalLib, MusEPlugin::PluginTypeMESS, debugStdErr);
+
+  if(types & MusEPlugin::PluginTypeVST3)
+    createPluginCacheFile(path, MusEPlugin::PluginTypeVST3, list, writePorts,
+      museGlobalLib, MusEPlugin::PluginTypeVST3, debugStdErr);
 
   // SPECIAL for LV2: No need for a cache file. Do not create one here. Read directly into the list later.
   //if(types & MusEPlugin::PluginTypeLV2)

@@ -66,6 +66,7 @@ SynthDialog::SynthDialog(QWidget* parent)
     ui.pluginType->addItem("DSSI", SEL_TYPE_DSSI);
     ui.pluginType->addItem("LV2", SEL_TYPE_LV2);
     ui.pluginType->addItem("VST", SEL_TYPE_VST);
+    ui.pluginType->addItem("VST3", SEL_TYPE_VST3);
 
     connect (ui.pluginType,SIGNAL(currentIndexChanged(int)), SLOT(filterType(int)));
 
@@ -423,6 +424,11 @@ void SynthDialog::fillSynths()
 
           case MusEPlugin::PluginTypeLinuxVST:
             if(selType != SEL_TYPE_VST && selType != SEL_TYPE_ALL)
+                continue;
+          break;
+
+          case MusEPlugin::PluginTypeVST3:
+            if(selType != SEL_TYPE_VST3 && selType != SEL_TYPE_ALL)
                 continue;
           break;
 

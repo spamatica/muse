@@ -26,6 +26,7 @@
 
 #include <QString>
 #include <QStringList>
+#include <cstdint>
 
 #include "config.h"
 #include "plugin_scan.h"
@@ -52,6 +53,9 @@ QStringList pluginGetDssiDirectories();
 QStringList pluginGetLinuxVstDirectories();
 QStringList pluginGetLv2Directories();
 QStringList pluginGetVstDirectories();
+QStringList pluginGetVst3Directories();
+// Time stamp (ms since epoch) of a VST3 bundle, based on the library inside it. 0 if it does not exist.
+std::int64_t pluginVst3BundleTime(const QString& bundlePath);
 QStringList pluginGetDirectories(const QString& museGlobalLib,
                                  MusEPlugin::PluginType type = MusEPlugin::PluginTypeNone);
 

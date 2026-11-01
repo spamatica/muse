@@ -438,6 +438,7 @@ void initVST_Native()
       case MusEPlugin::PluginTypeDSSIVST:
       case MusEPlugin::PluginTypeDSSI:
       case MusEPlugin::PluginTypeVST:
+      case MusEPlugin::PluginTypeVST3:
       case MusEPlugin::PluginTypeLV2:
       case MusEPlugin::PluginTypeMESS:
       case MusEPlugin::PluginTypeMETRONOME:

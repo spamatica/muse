@@ -78,6 +78,16 @@ QT5_WRAP_CPP ( wavepreview_moc_headers
       wavepreview.h
       )
 
+if (VST3_SUPPORT)
+      QT5_WRAP_CPP ( vst3_moc_headers
+            vst3.h
+            )
+      set ( vst3_source_files
+            vst3.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/../vst3/vst3editor.cpp
+            )
+endif (VST3_SUPPORT)
+
 ##
 ## Resource files
 ##
@@ -189,6 +199,8 @@ add_library ( wavepreview_module SHARED
 add_library ( core ${MODULES_BUILD}
       ${muse_moc_headers}
       ${core_source_files}
+      ${vst3_moc_headers}
+      ${vst3_source_files}
       )
 add_executable ( muse
       ${main_source_files}
@@ -321,6 +333,13 @@ target_link_libraries(core
       ${FST_LIB}
       dl
       )
+
+if (VST3_SUPPORT)
+      # muse_vst3host is made in ../sandbox/CMakeLists.txt. Its include directories give "vst3/vst3host.h"
+      #  and the VST3 SDK headers.
+      target_link_libraries(core muse_vst3host)
+      target_include_directories(core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+endif (VST3_SUPPORT)
 
 if(NOT LV2_USE_PLUGIN_CACHE)
       target_link_libraries(core plugin_cache_reader_module)

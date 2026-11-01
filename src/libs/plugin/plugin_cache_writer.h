@@ -153,6 +153,8 @@ void scanLadspaPlugins(const QString& museGlobalLib, PluginScanList* list, bool 
 void scanMessPlugins(const QString& museGlobalLib, PluginScanList* list, bool scanPorts, bool debugStdErr);
 void scanDssiPlugins(PluginScanList* list, bool scanPorts, bool debugStdErr);
 void scanLinuxVSTPlugins(PluginScanList* list, bool scanPorts, bool debugStdErr);
+// Scans VST3 bundles, each in the plugin scan sandbox program. Does nothing without VST3_SUPPORT.
+void scanVst3Plugins(PluginScanList* list, bool scanPorts, bool debugStdErr);
 #ifdef LV2_USE_PLUGIN_CACHE
 void scanLv2Plugins(PluginScanList* list, bool scanPorts, bool debugStdErr);
 #endif
