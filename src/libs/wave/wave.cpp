@@ -30,6 +30,8 @@
 #include <samplerate.h>
 
 #include <QProgressDialog>
+#include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QFile>
 
 #include "wave.h"
@@ -652,7 +654,11 @@ void SndFile::createCache(const QString& path, bool showProgress, bool bWrite, s
       progress = new QProgressDialog(label,
                                      QString(), 0, csize, 0);
       progress->setMinimumDuration(0);
+      progress->setWindowModality(Qt::ApplicationModal);
       progress->show();
+      progress->setValue(0);
+      // Make sure the dialog is actually painted before we start the long work.
+      QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
    }
    
    const int srcChannels = channels();
@@ -660,14 +666,18 @@ void SndFile::createCache(const QString& path, bool showProgress, bool bWrite, s
    float* fp[srcChannels];
    for (int k = 0; k < srcChannels; ++k)
       fp[k] = &data[k][0];
-   int interval = (csize - cstart) / 10;
-
-   if(!interval)
-      interval = 1;
+   QElapsedTimer progressTimer;
+   progressTimer.start();
+   // Seek only once. The reads below are contiguous, and seeking in every block is very
+   //  slow for compressed formats such as Ogg/Vorbis.
+   seek(cstart * cacheMag, 0);
    for (int i = cstart; i < csize; i++) {
-      if (showProgress && ((i % interval) == 0))
+      // Update often enough to look alive, even if each block is slow to decode.
+      if (showProgress && progressTimer.elapsed() >= 50) {
          progress->setValue(i);
-      seek(i * cacheMag, 0);
+         QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+         progressTimer.restart();
+      }
       read(srcChannels, fp, cacheMag);
       for (int ch = 0; ch < srcChannels; ++ch) {
          float rms = 0.0;
