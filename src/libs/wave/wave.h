@@ -28,6 +28,7 @@
 #include <vector>
 #include <sndfile.h>
 #include <atomic>
+#include <mutex>
 // For atomic<U*>, according to docs.
 #include <memory>
 
@@ -116,6 +117,15 @@ class SndFile {
       sf_count_t _logicalWritePos; // Where the caller wants the next write to land.
       bool _discardWarned;
       size_t writeSilence(size_t n, bool liveWaveUpdate);
+      // Accurate incremental peak cache for write-only mode, where all frames pass through
+      //  realWrite in order. Lets update() skip re-decoding the whole file after recording.
+      std::vector<unsigned char> _lcPeak;  // Per channel peak of the block being accumulated.
+      std::vector<float> _lcRms;           // Per channel sum of squares of the block being accumulated.
+      std::mutex _lcMutex;                 // Guards the cache while it grows during recording.
+      int _lcInBlock;                      // Frames accumulated in the current block.
+      bool _lcValid;                       // The live cache covers every frame written so far.
+      void accumulateLiveCache(const float* buf, size_t n);
+      void flushLiveCacheBlock();
       size_t readInternal(int srcChannels, float** dst, size_t n, bool overwrite, float *buffer);
       size_t realWrite(int srcChannels, float** src, size_t n, size_t offs = 0, bool liveWaveUpdate = false);
       

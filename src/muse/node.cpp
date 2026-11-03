@@ -1897,7 +1897,11 @@ void AudioTrack::record()
       const bool use_latency_corr = useLatencyCorrection();
       float* buffer[_channels];
       while(fifo.getCount()) {
-            if (fifo.get(_channels, MusEGlobal::segmentSize, buffer, &pos, &latency)) {
+            // Only peek here. The buffer is removed from the fifo AFTER it has been written to the file,
+            //  so that recordFifoCount() does not reach zero while the last buffer is still being written.
+            // Song::cmdAddRecordedWave() waits for the count to reach zero before closing the file, and
+            //  slow writers such as Ogg/Vorbis encoding would otherwise be closed in mid-write (crash).
+            if (fifo.peek(_channels, MusEGlobal::segmentSize, buffer, &pos, &latency)) {
                   fprintf(stderr, "AudioTrack::record(): empty fifo\n");
                   return;
                   }
@@ -2005,6 +2009,7 @@ void AudioTrack::record()
               else {
                     fprintf(stderr, "AudioNode::record(): no recFile\n");
                     }
+              fifo.remove();
             }
       }
 
