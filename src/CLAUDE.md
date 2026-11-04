@@ -47,6 +47,7 @@ Understand this before touching song/track/part/event data. (Full explanation: [
 ## Architecture: audio/MIDI drivers
 
 - `AudioDevice` ([muse/driver/audiodev.h](muse/driver/audiodev.h)) is the abstract backend interface; `deviceType()` returns one of `DUMMY_AUDIO, JACK_AUDIO, RTAUDIO_AUDIO, ALSA_AUDIO, PIPEWIRE_AUDIO`. Implementations: `jack.cpp`, `rtaudio.cpp`, `alsaaudio.cpp`, `pipewireaudio.cpp` (+ `pipewiregraph.*`), `dummyaudio.cpp`. Each init function assigns `MusEGlobal::audioDevice`, and clears it on exit.
+- Freewheel (process as fast as possible, used by bounce/export, `AudioDevice::setFreewheel`) is implemented by every backend: JACK natively; ALSA and dummy in their own loop thread; PipeWire and RtAudio with a thread of their own while the sound card/graph callback gives silence (moving the PipeWire node to the graph's freewheel driver was 5x slower). The driver must call `Audio::setFreewheel()` from the thread that processes.
 - Backends differ in capabilities (e.g. xrun counting, DSP load reporting; recent commits make the GUI gray out or measure these when a driver lacks them). When adding a backend feature, check how the other drivers and the GUI handle absence.
 - MIDI backends (`alsamidi.*`, `jackmidi.*`) and timer sources (`alsatimer`, `rtctimer`, `posixtimer`, `qttimer`, `simpletimer`, all behind `timerdev.h`) are independent of the audio backend.
 

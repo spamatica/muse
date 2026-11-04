@@ -27,6 +27,7 @@
 #include <pipewire/filter.h>
 
 #include <atomic>
+#include <pthread.h>
 #include <list>
 #include <map>
 #include <mutex>
@@ -99,6 +100,13 @@ class PipeWireAudioDevice : public AudioDevice {
       // Whether the process callback should run the MusE cycle.
       std::atomic<bool> _active;
       std::atomic<bool> _rateMismatchWarned;
+      // Freewheel: the graph is paced by the sound card, so for processing as fast as possible a thread of our
+      //  own runs the cycles, and the process callback only gives silence meanwhile. Whoever runs a cycle holds
+      //  _portMutex.
+      std::atomic<bool> _freewheelRequest;
+      pthread_t _freewheelThread;
+      bool _freewheelThreadRunning;
+      static void* freewheelLoop(void*);
 
       // Protects the lists of our own ports. The process callback holds it while it runs.
       std::recursive_mutex _portMutex;
@@ -206,7 +214,9 @@ class PipeWireAudioDevice : public AudioDevice {
       virtual bool isRealtime() { return _rtPriority > 0; }
       virtual int realtimePriority() const { return _rtPriority; }
 
-      virtual void setFreewheel(bool) {}
+      virtual void setFreewheel(bool f);
+      // Ends the freewheel thread, if there is one.
+      void stopFreewheelThread();
       virtual int setMaster(bool, bool /*unconditional*/ = false) { return 1; }
 };
 
