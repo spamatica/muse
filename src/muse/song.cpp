@@ -3133,10 +3133,17 @@ void Song::cmdAddRecordedWave(MusECore::WaveTrack* track, MusECore::Pos s, MusEC
       // NOTE: The fifo scheme is used only if NOT in transport freewheel mode where the data is directly
       //  written to the sndfile and therefore stops immediately when the transport stops and thus is
       //  safe to read here regardless of waiting.
-      int tout = 100; // Ten seconds. Otherwise we gotta move on.
+      // Slow writers such as Ogg/Vorbis may take a while with many tracks, so the timeout
+      //  restarts as long as the fifo is making progress.
+      int tout = 100; // Ten seconds without progress. Otherwise we gotta move on.
+      int lastCount = track->recordFifoCount();
       while(track->recordFifoCount() != 0)
       {
         usleep(100000);
+        const int cnt = track->recordFifoCount();
+        if(cnt < lastCount)
+          tout = 100;
+        lastCount = cnt;
         --tout;
         if(tout == 0)
         {

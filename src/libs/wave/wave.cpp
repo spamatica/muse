@@ -30,6 +30,8 @@
 #include <samplerate.h>
 
 #include <QProgressDialog>
+#include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QFile>
 
 #include "wave.h"
@@ -158,6 +160,7 @@ SndFile::SndFile(
   : _isOffline(isOffline), _useConverter(installConverter)
       {
       _stretchList = nullptr;
+
       _audioConverterSettings = nullptr;
       if(_useConverter)
       {
@@ -183,6 +186,8 @@ SndFile::SndFile(
       _writePos = 0;
       _logicalWritePos = 0;
       _discardWarned = false;
+      _lcInBlock = 0;
+      _lcValid = false;
       
       _staticAudioConverter    = nullptr;
       _staticAudioConverterUI  = nullptr;
@@ -224,6 +229,8 @@ SndFile::SndFile(
       _writePos = 0;
       _logicalWritePos = 0;
       _discardWarned = false;
+      _lcInBlock = 0;
+      _lcValid = false;
       
       _staticAudioConverter    = nullptr;
       _staticAudioConverterUI  = nullptr;
@@ -391,14 +398,14 @@ bool SndFile::openRead(bool createCache, bool showProgress)
 
         if(finfo)
           _staticAudioConverterUI = setupAudioConverter(
-            audioConverterSettings(), 
+            audioConverterSettings(),
             *_defaultSettings,
             true,  // true = Local settings.
-            AudioConverterSettings::GuiMode, 
+            AudioConverterSettings::GuiMode,
             isResampled(),
             isStretched());
       }
-      
+
       writeFlag = false;
       openFlag  = true;
 
@@ -612,12 +619,22 @@ void SndFile::update(bool showProgress)
       if(!finfo)
         return;
 
+      // Write-only files (Ogg/Vorbis) are expensive to decode and seek in, so reuse the
+      //  peak cache accumulated while recording instead of rebuilding it from the file.
+      const bool useLive = _writeOnly && _lcValid && cache && openFlag;
+      if(useLive)
+        flushLiveCacheBlock();
+      const sf_count_t liveBlocks = csize;
+      const sf_count_t liveFrames = _writePos;
+
       close();
 
       // force recreation of wca data
       QString cacheName = finfo->absolutePath() +
          QString("/") + finfo->completeBaseName() + QString(".wca");
       QFile::remove(cacheName);
+      if(useLive && liveBlocks == (liveFrames + cacheMag - 1) / cacheMag)
+        writeCache(cacheName);
       if (openRead(true, showProgress)) {
             ERROR_WAVE(stderr, "SndFile::update openRead(%s) failed: %s\n", path().toLocal8Bit().constData(), strerror().toLocal8Bit().constData());
             }
@@ -638,7 +655,11 @@ void SndFile::createCache(const QString& path, bool showProgress, bool bWrite, s
       progress = new QProgressDialog(label,
                                      QString(), 0, csize, 0);
       progress->setMinimumDuration(0);
+      progress->setWindowModality(Qt::ApplicationModal);
       progress->show();
+      progress->setValue(0);
+      // Make sure the dialog is actually painted before we start the long work.
+      QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
    }
    
    const int srcChannels = channels();
@@ -646,14 +667,18 @@ void SndFile::createCache(const QString& path, bool showProgress, bool bWrite, s
    float* fp[srcChannels];
    for (int k = 0; k < srcChannels; ++k)
       fp[k] = &data[k][0];
-   int interval = (csize - cstart) / 10;
-
-   if(!interval)
-      interval = 1;
+   QElapsedTimer progressTimer;
+   progressTimer.start();
+   // Seek only once. The reads below are contiguous, and seeking in every block is very
+   //  slow for compressed formats such as Ogg/Vorbis.
+   seek(cstart * cacheMag, 0);
    for (int i = cstart; i < csize; i++) {
-      if (showProgress && ((i % interval) == 0))
+      // Update often enough to look alive, even if each block is slow to decode.
+      if (showProgress && progressTimer.elapsed() >= 50) {
          progress->setValue(i);
-      seek(i * cacheMag, 0);
+         QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+         progressTimer.restart();
+      }
       read(srcChannels, fp, cacheMag);
       for (int ch = 0; ch < srcChannels; ++ch) {
          float rms = 0.0;
@@ -707,7 +732,9 @@ void SndFile::readCache(const QString& path, bool showProgress)
       cache [ch].resize(csize);
    }
 
-   FILE* cfile = fopen(path.toLocal8Bit().constData(), "r");
+   // A cache file of the wrong size is stale or incomplete. Rebuild it.
+   const bool cacheSizeOk = QFileInfo(path).size() == (qint64)csize * (qint64)sizeof(SampleV) * srcChannels;
+   FILE* cfile = cacheSizeOk ? fopen(path.toLocal8Bit().constData(), "r") : nullptr;
    if (cfile) {
       for (int ch = 0; ch < srcChannels; ++ch)
          fread(&cache[ch] [0], csize * sizeof(SampleV), 1, cfile);
@@ -761,6 +788,9 @@ void SndFile::read(SampleV* s, int mag, unsigned pos, bool overwrite, bool allow
             return;
 
       if (mag < cacheMag) {
+            // Can't read samples back from a write-only file.
+            if(!sfUI && _writeOnly)
+                  return;
             float data[srcChannels][mag];
             float* fp[srcChannels];
             for (int i = 0; i < srcChannels; ++i)
@@ -816,10 +846,10 @@ void SndFile::read(SampleV* s, int mag, unsigned pos, bool overwrite, bool allow
                   if(overwrite)
                     s[ch].peak = 0;
 
-                  float rms = 0.0;
+                  //float rms = 0.0;
                   for (int i = 0; i < mag; i++) {
                         float fd = data[ch][i];
-                        rms += fd;
+                        //rms += fd;
                         int idata = int(fd * 255.0);
                         if (idata < 0)
                               idata = -idata;
@@ -831,6 +861,10 @@ void SndFile::read(SampleV* s, int mag, unsigned pos, bool overwrite, bool allow
                   }
             }
       else {
+            // The cache may be growing in another thread while recording.
+            std::lock_guard<std::mutex> lock(_lcMutex);
+            if(!cache)
+                  return;
             mag /= cacheMag;
             int rest = csize - (pos/cacheMag);
             int end  = mag;
@@ -875,7 +909,7 @@ void SndFile::readConverted(SampleV* s, int mag, sf_count_t pos, sf_count_t offs
       }
         
       const int srcChannels = channels();
-        
+
       if(overwrite)
         for (int ch = 0; ch < srcChannels; ++ch) {
             s[ch].peak = 0;
@@ -904,7 +938,7 @@ void SndFile::readConverted(SampleV* s, int mag, sf_count_t pos, sf_count_t offs
             else
               ret = _staticAudioConverter->process(
                 sf, channels(), sampleRateRatio(), stretchList(), pos, fp, srcChannels, n, true);
-            
+
             if(ret != n)
               return;
 
@@ -913,10 +947,10 @@ void SndFile::readConverted(SampleV* s, int mag, sf_count_t pos, sf_count_t offs
                   if(overwrite)
                     s[ch].peak = 0;
 
-                  float rms = 0.0;
+                  //float rms = 0.0;
                   for (int i = 0; i < mag; i++) {
                         float fd = data[ch][i];
-                        rms += fd;
+                        //rms += fd;
                         int idata = int(fd * 255.0);
                         if (idata < 0)
                               idata = -idata;
@@ -967,6 +1001,10 @@ bool SndFile::openWrite()
       _writePos = 0;
       _logicalWritePos = 0;
       _discardWarned = false;
+      _lcPeak.clear();
+      _lcRms.clear();
+      _lcInBlock = 0;
+      _lcValid = false;
 
       // File based:
       if(finfo)
@@ -988,6 +1026,7 @@ bool SndFile::openWrite()
           }
           sf = sf_open(p.toLocal8Bit().constData(), SFM_WRITE, &sfinfo);
           _writeOnly = (sf != nullptr);
+          _lcValid = _writeOnly;
         }
       }
       // Memory based:
@@ -1181,7 +1220,6 @@ sf_count_t SndFile::convertPosition(sf_count_t pos) const
     if(type != 0)
       new_pos = _stretchList->unSquish(new_pos, type);
   }
-
   return new_pos;
 }
 
@@ -1238,8 +1276,9 @@ sf_count_t SndFile::samplesConverted() const
       {
       if(sfinfo.samplerate == 0 || _systemSampleRate == 0)
         return 0;
-      return samples() / sampleRateRatio();
+      return convertPosition(samples());
       }
+
 
 //---------------------------------------------------------
 //   channels
@@ -1436,6 +1475,72 @@ size_t SndFile::writeSilence(size_t n, bool liveWaveUpdate)
    return wrFrames;
 }
 
+//---------------------------------------------------------
+//   accumulateLiveCache
+//    Write-only mode: frames arrive strictly in order, so peak
+//     and rms can be accumulated per block as they are written.
+//---------------------------------------------------------
+
+void SndFile::accumulateLiveCache(const float* buf, size_t n)
+{
+   const int chans = sfinfo.channels;
+   if(chans <= 0)
+      return;
+   if((int)_lcPeak.size() != chans)
+   {
+      _lcPeak.assign(chans, 0);
+      _lcRms.assign(chans, 0.0f);
+   }
+   for(size_t i = 0; i < n; ++i)
+   {
+      for(int ch = 0; ch < chans; ++ch)
+      {
+         const float fd = buf[i * chans + ch];
+         _lcRms[ch] += fd * fd;
+         int idata = int(fd * 255.0);
+         if(idata < 0)
+            idata = -idata;
+         if(_lcPeak[ch] < idata)
+            _lcPeak[ch] = idata > 255 ? 255 : idata;
+      }
+      if(++_lcInBlock == cacheMag)
+         flushLiveCacheBlock();
+   }
+}
+
+//---------------------------------------------------------
+//   flushLiveCacheBlock
+//    Append the block being accumulated to the cache. A partial
+//     block is treated as if padded with silence, like createCache.
+//---------------------------------------------------------
+
+void SndFile::flushLiveCacheBlock()
+{
+   const int chans = sfinfo.channels;
+   if(_lcInBlock == 0 || (int)_lcPeak.size() != chans)
+      return;
+   std::lock_guard<std::mutex> lock(_lcMutex);
+   if(!cache)
+   {
+      cache = new SampleVtype[chans];
+      csize = 0;
+   }
+   for(int ch = 0; ch < chans; ++ch)
+   {
+      int rmsValue = int(sqrt(_lcRms[ch] / cacheMag) * 255.0);
+      if(rmsValue > 255)
+         rmsValue = 255;
+      SampleV v;
+      v.peak = _lcPeak[ch];
+      v.rms = rmsValue;
+      cache[ch].push_back(v);
+      _lcPeak[ch] = 0;
+      _lcRms[ch] = 0.0f;
+   }
+   ++csize;
+   _lcInBlock = 0;
+}
+
 size_t SndFile::realWrite(int srcChannels, float** src, size_t n, size_t offs, bool liveWaveUpdate)
 {
    int dstChannels = sfinfo.channels;
@@ -1494,7 +1599,15 @@ size_t SndFile::realWrite(int srcChannels, float** src, size_t n, size_t offs, b
    if(_writeOnly && nbr > 0)
       _writePos += nbr;
 
-   if(liveWaveUpdate)
+   if(liveWaveUpdate && _writeOnly)
+   {
+      if(nbr > 0)
+      {
+         sfinfo.frames += nbr;
+         accumulateLiveCache(writeBuffer, nbr);
+      }
+   }
+   else if(liveWaveUpdate)
    { //update cache
       if(!cache)
       {
@@ -1582,8 +1695,6 @@ sf_count_t SndFile::seekUI(sf_count_t frames, int whence)
 
 sf_count_t SndFile::seekUIConverted(sf_count_t frames, int whence, sf_count_t offset)
 {
-  if(!sfUI && _writeOnly) // Can't read from a write-only file.
-    return -1;
   const sf_count_t smps = samples();
   sf_count_t rn = 0;
   sf_count_t pos = offset + convertPosition(frames);
@@ -1592,6 +1703,10 @@ sf_count_t SndFile::seekUIConverted(sf_count_t frames, int whence, sf_count_t of
   // Clamp it at 'one past the end' in other words EOF.
   if(pos > smps)
     pos = smps;
+  // Can't read from a write-only file. But the caller (live drawing while recording)
+  //  only needs the peak cache, which does not need a seek. Report success.
+  if(!sfUI && _writeOnly)
+    return pos;
   
   if(sfUI)
   {
