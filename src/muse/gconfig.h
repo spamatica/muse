@@ -374,6 +374,8 @@ struct GlobalConfigValues {
       bool useOutputLimiter;
       bool showDidYouKnow;
       bool vstInPlace; // Enable VST in-place processing
+      int audioThreads; // Threads for processing the audio tracks in parallel, including the audio thread. 0 or 1 = off. (audioparallel.h)
+      bool audioThreadsAuto; // Measure and use the parallel processing only while it is faster.
       int deviceAudioSampleRate;
       int deviceAudioBufSize;
       int deviceAudioBackend;

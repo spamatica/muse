@@ -2565,6 +2565,17 @@ void TList::mousePressEvent(QMouseEvent* ev)
                     a->setShortcut(shortcuts[SHRT_MOVEBOTTOM_TRACK].key);
                 }
 
+                if(!t->isMidiTrack())
+                {
+                    p->addSeparator();
+                    a = p->addAction(tr("Process in the Audio Thread Only"));
+                    a->setToolTip(tr("When audio is processed on several threads, process this track in the audio thread "
+                                     "only. For plugins that do not work when run beside others."));
+                    a->setCheckable(true);
+                    a->setChecked(static_cast<MusECore::AudioTrack*>(t)->processSerially());
+                    a->setData(1030);
+                }
+
                 p->addSeparator();
                 a = p->addAction(tr("Track Comment..."));
                 a->setData(1002);
@@ -2618,6 +2629,13 @@ void TList::mousePressEvent(QMouseEvent* ev)
                         {
                             TrackComment* tc = new TrackComment(t, nullptr);
                             tc->show();
+                        }
+                            break;
+                        case 1030:     // process in the audio thread only
+                        {
+                            MusECore::AudioTrack* at = static_cast<MusECore::AudioTrack*>(t);
+                            at->setProcessSerially(!at->processSerially());
+                            MusEGlobal::song->setDirty();
                         }
                             break;
                         case 1004:

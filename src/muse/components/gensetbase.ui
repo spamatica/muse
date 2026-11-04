@@ -1119,6 +1119,65 @@ Adjusts responsiveness of audio controls and
             </item>
            </widget>
           </item>
+          <item row="7" column="0">
+           <widget class="QLabel" name="audioThreadsLabel">
+            <property name="text">
+             <string>Parallel audio threads</string>
+            </property>
+           </widget>
+          </item>
+          <item row="7" column="1">
+           <widget class="QSpinBox" name="audioThreadsSpinBox">
+            <property name="toolTip">
+             <string>Number of threads for processing the audio tracks in parallel, including the audio thread.</string>
+            </property>
+            <property name="whatsThis">
+             <string>Process the audio tracks on several threads, for projects with many tracks or heavy plugins.
+Tracks that need each other's output are still processed in order.
+Off processes everything in the audio thread, as before.
+Right click a track name and choose 'Process in the Audio Thread Only'
+for a plugin that does not work beside others.</string>
+            </property>
+            <property name="specialValueText">
+             <string>Off</string>
+            </property>
+            <property name="minimum">
+             <number>0</number>
+            </property>
+            <property name="maximum">
+             <number>16</number>
+            </property>
+           </widget>
+          </item>
+          <item row="8" column="0" colspan="2">
+           <widget class="QCheckBox" name="audioThreadsAutoCheckBox">
+            <property name="toolTip">
+             <string>Measure both ways now and then, and use the threads only while they are faster.</string>
+            </property>
+            <property name="text">
+             <string>Use the threads only when it is faster</string>
+            </property>
+           </widget>
+          </item>
+          <item row="9" column="0" colspan="2">
+           <widget class="QLabel" name="audioParallelStatusLabel">
+            <property name="minimumSize">
+             <size>
+              <width>0</width>
+              <height>64</height>
+             </size>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
+            </property>
+            <property name="text">
+             <string/>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
          </layout>
         </widget>
        </item>
@@ -2755,6 +2814,8 @@ Some plugins ignore this settings.</string>
   <tabstop>outputLimiterCheckBox</tabstop>
   <tabstop>vstInPlaceCheckBox</tabstop>
   <tabstop>minControlProcessPeriodComboBox</tabstop>
+  <tabstop>audioThreadsSpinBox</tabstop>
+  <tabstop>audioThreadsAutoCheckBox</tabstop>
   <tabstop>externalWavEditorSelect</tabstop>
   <tabstop>audioConvertersButton</tabstop>
   <tabstop>scrollArea_3</tabstop>

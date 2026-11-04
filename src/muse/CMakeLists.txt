@@ -100,6 +100,8 @@ file (GLOB core_source_files
       app.cpp
       audio.cpp
       audio_fifo.cpp
+      audioprofile.cpp
+      audioparallel.cpp
       audioprefetch.cpp
       audiotrack.cpp
       cobject.cpp

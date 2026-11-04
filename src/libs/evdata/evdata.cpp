@@ -324,7 +324,7 @@ void EvData::resize(int l)
         _data = new unsigned char[l];
         
         // Setting the data destroys any reference. Create a new reference now.
-        _refCount = new int(1);
+        _refCount = new std::atomic<int>(1);
       }
       _dataLen = l;
 }
@@ -350,7 +350,7 @@ void EvData::setData(const unsigned char* p, int l)
         memcpy( _data, p, l);
         
         // Setting the data destroys any reference. Create a new reference now.
-        _refCount = new int(1);
+        _refCount = new std::atomic<int>(1);
       }
       _dataLen = l;
 }
@@ -381,7 +381,7 @@ void EvData::setData(const SysExInputProcessor* q)
         // Copy the non-contiguous chunks of data to the contiguous data.
         q->copy( _data, l);
         // Setting the data destroys any reference. Create a new reference now.
-        _refCount = new int(1);
+        _refCount = new std::atomic<int>(1);
       }
       _dataLen = l;
 }

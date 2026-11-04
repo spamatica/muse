@@ -296,9 +296,11 @@ AudioTrack::AudioTrack(TrackType t, int channels)
       _previousLatency = 0.0f;
 
       _processed = false;
+      _done = false;
       _haveData = false;
       _sendMetronome = false;
       _prefader = false;
+      _processSerially = false;
       _efxPipe  = new Pipeline();
       recFileNumber = 1;
       _channels = 0;
@@ -343,6 +345,7 @@ AudioTrack::AudioTrack(const AudioTrack& t, int flags)
       _previousLatency = 0.0f;
 
       _processed      = false;
+      _done           = false;
       _haveData       = false;
       _efxPipe        = new Pipeline();                 // Start off with a new pipeline.
       recFileNumber = 1;
@@ -389,6 +392,7 @@ void AudioTrack::internal_assign(const Track& t, int flags)
       {
         _sendMetronome  = at._sendMetronome;
         _prefader       = at._prefader;
+        _processSerially = at._processSerially.load();
         _auxSend        = at._auxSend;
         _automationType = at._automationType;
         _gain           = at._gain;
@@ -1878,6 +1882,8 @@ void AudioTrack::writeProperties(int level, Xml& xml) const
       Track::writeProperties(level, xml);
       xml.intTag(level, "prefader", prefader());
       xml.intTag(level, "sendMetronome", sendMetronome());
+      if(processSerially())
+        xml.intTag(level, "processSerially", 1);
       xml.intTag(level, "automation", int(automationType()));
       xml.doubleTag(level, "gain", _gain);
       if (hasAuxSend()) {
@@ -2067,6 +2073,8 @@ bool AudioTrack::readProperties(Xml& xml, const QString& tag)
             _prefader = xml.parseInt();
       else if (tag == "sendMetronome")
             _sendMetronome = xml.parseInt();
+      else if (tag == "processSerially")
+            _processSerially = xml.parseInt();
       else if (tag == "gain")
             _gain = xml.parseDouble();
       else if (tag == "automation")
@@ -2983,16 +2991,70 @@ bool AudioAux::getData(unsigned pos, int ch, unsigned samples, float** data)
           continue;
         track = (AudioTrack*)(*it);
         // If there are any Aux route paths to the track, defer processing until the second main track processing pass.
-        if(!track->processed() && track->hasAuxSend() && !track->auxRefCount())
+        if(track->hasAuxSend() && !track->auxRefCount())
         {
-          int chans = track->channels();
-          // Just a dummy buffer.
-          float* buff[chans];
-          float buff_data[samples * chans];
-          for (int i = 0; i < chans; ++i)
-                buff[i] = buff_data + i * samples;
+          if(!track->processed())
+          {
+            int chans = track->channels();
+            // Just a dummy buffer.
+            float* buff[chans];
+            float buff_data[samples * chans];
+            for (int i = 0; i < chans; ++i)
+                  buff[i] = buff_data + i * samples;
 
-          track->copyData(pos, -1, chans, chans, -1, -1, samples, buff);
+            track->copyData(pos, -1, chans, chans, -1, -1, samples, buff);
+          }
+          else
+            track->waitDone(); // Being processed by another thread.
+        }
+      }
+
+      // Add up the sends. In the order of the track list, so the result is the same however the tracks were processed.
+      // The sends are taken from the output buffers of the tracks, which hold their data until the next cycle.
+      const AuxList* al = MusEGlobal::song->auxs();
+      unsigned auxIndex = 0;
+      for( ; auxIndex < al->size(); ++auxIndex)
+        if((*al)[auxIndex] == this)
+          break;
+      if(auxIndex < al->size())
+      {
+        for(ciTrack it = tl->begin(); it != tl->end(); ++it)
+        {
+          if((*it)->isMidiTrack())
+            continue;
+          track = (AudioTrack*)(*it);
+          // Tracks that were off or muted did not get as far as the sends.
+          if(!track->hasAuxSend() || track->auxRefCount() || !track->haveData())
+            continue;
+          if(auxIndex >= track->getAuxSendValueList()->size())
+            continue;
+          const double m = (*track->getAuxSendValueList())[auxIndex];
+          if(m <= 0.0001)           // optimize
+            continue;
+          const int trackChans = track->channels();
+          const int auxChannels = channels();
+          float** dst = buffer;
+          float* const* src = track->cachedOutBuffers();
+          if((trackChans == 1 && auxChannels == 1) || trackChans == 2)
+          {
+            for(int c = 0; c < trackChans; ++c)
+            {
+              float* db = dst[c % auxChannels]; // no matter whether there's one or two dst buffers
+              const float* sb = src[c];
+              for(unsigned f = 0; f < samples; ++f)
+                *db++ += (*sb++ * m);   // add to mix
+            }
+          }
+          else if(trackChans == 1 && auxChannels == 2)  // copy mono to both channels
+          {
+            for(int c = 0; c < auxChannels; ++c)
+            {
+              float* db = dst[c % auxChannels];
+              const float* sb = src[0];
+              for(unsigned f = 0; f < samples; ++f)
+                *db++ += (*sb++ * m);   // add to mix
+            }
+          }
         }
       }
 

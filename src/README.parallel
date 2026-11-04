@@ -1,0 +1,135 @@
+Parallel audio processing in MusE: findings and plan
+====================================================
+
+Status: all four steps are done (measuring, the executor off by default, the fixes for the plugin hosts, settings).
+
+
+HOW THE AUDIO IS PROCESSED NOW
+------------------------------
+
+* Audio::process1 (muse/audio.cpp) runs the aux tracks, then every AudioOutput::process, then the tracks
+  that nothing pulled from. All in the audio thread.
+* The data is pulled. AudioTrack::copyData (muse/node.cpp) calls getData, which calls copyData of every track
+  in the in-routes (TRACK_ROUTE). Each track is processed once per cycle: the first call does the work and
+  sets the processed flag (cleared by preProcessAlways), later calls copy the finished outBuffers.
+* process1 already processes tracks that have no consumer by calling copyData with a dummy buffer. A
+  scheduler can use the same call to run tracks ahead of whoever pulls from them.
+
+What a track depends on
+  * the tracks in its in-routes (also the audio inputs of a synth track, the sidechain of a VST3 instrument),
+  * for an aux track: every track that has aux sends (AudioAux::getData, muse/audiotrack.cpp).
+  MIDI is processed before the audio, wave tracks read their own prefetch fifo, and the metronome has no
+  inputs, so they are leaves. The routes cannot make a cycle (they are checked when they are made).
+
+Things that stop a parallel run from being correct, found by reading the code
+  1. Aux send buffers: every track adds its send into the one AudioAux::sendBuffer (muse/node.cpp, in
+     copyData). Needs one buffer per sending track, summed by the aux track in a fixed order, which also
+     keeps the result the same from run to run.
+  2. The VST2 host callback has a static VstTimeInfo (muse/vst_native.cpp) shared by all instances.
+  3. Plugins: DSSI, LV2, LADSPA, DSSI-VST hosts still have to be audited, and some plugins are not safe to
+     run beside each other. Needs a way to say "process this one in the main audio thread".
+  Fine as they are: meters, latency compensators and plugin pipelines are per track, the audio to GUI
+  rings (song->putIpcCtrlGUIMessage and the like) take several writers, MusE sets no denormal flags.
+
+
+PLAN
+----
+
+Step 1: measure                                                                       DONE
+  muse/audioprofile.{h,cpp}. Off by default. MUSE_AUDIO_PROFILE=<seconds> prints a report to stderr every
+  that many seconds (about 20 heart beats a second, so the interval is rounded to 50 ms):
+    * the number of cycles, the frames per cycle, how long a cycle may take, and how long a whole pass over
+      the tracks (process1) takes,
+    * for every audio track: its own time per cycle (without the tracks it pulls from), the longest single
+      run, and the tracks it needs,
+    * the sum of all the times, the longest chain of tracks that need each other, and the most parallel
+      processing could gain (sum / longest chain),
+    * an estimate of the time of a pass with 1, 2, 3, 4, 6, 8 and 12 threads, from a simple scheduler that
+      gives the ready track with the longest way left to the end to a free thread. It leaves out the cost of
+      handing work to other threads.
+  Cost when off: a flag test per track and per cycle. The time of a track is taken in ProfileScope
+  (muse/node.cpp, in copyData, after the processed flag is set) and the outer track's time stops while an inner
+  one runs.
+  Example, 9 VST3 synths (Surge XT, Diva, Six Sines) in two groups into one output, each holding a note,
+  512 frames at 44100 Hz (a cycle may take 11.6 ms), run with muse4 -a -D under X11:
+    a whole pass takes 3.6 ms on average (31 % of a cycle), the longest 6.5 ms
+    each synth takes 0.24 to 0.61 ms, groups and output about 5 us
+    longest chain 0.62 ms, so at most 5.7x; estimated 2 threads 1.89x, 3: 2.97x, 4: 3.44x, 6: 5.09x
+  (That is a project made for the test, the numbers of a real one will differ. They show that the
+  profile works and that many independent synth tracks can scale. Mostly serial chains do not.)
+
+Step 2: an executor, off by default                                                    DONE
+  muse/audioparallel.{h,cpp}. Turn it on with MUSE_AUDIO_THREADS=<n> (n threads including the audio thread,
+  2 to 16). The worker threads are started from the heart beat once the audio device is up, with SCHED_FIFO at
+  MusEGlobal::realTimePriority if that works (otherwise normal threads and a warning).
+  * Audio::process1 calls audioParallelProcess before the serial passes. It processes every audio track that
+    is not an output by calling copyData with a dummy buffer, as the serial "leftover" pass does, but ahead of
+    whoever pulls from it and on several threads. The serial passes then find those tracks done, and only the
+    outputs are left for them.
+  * The graph (in-routes + aux sends, see above) lives in fixed arrays (1024 tracks, 16384 edges) and is
+    rebuilt in the audio thread when a signature of the tracks and routes changes, so nothing is allocated
+    there. A cycle, or more than the limits, means serial processing.
+  * Order: a thread takes the ready track with the longest chain of tracks after it. All threads, the audio
+    thread too, loop until all tracks are done. Workers sleep on a semaphore between cycles.
+  * Safety net: AudioTrack::copyData claims the track with a compare-exchange on _processed. A thread that
+    finds a track claimed by another waits (AudioTrack::waitDone, at most 50 ms, only while the executor runs)
+    until _done is set, so a dependency that is missing from the graph costs time and not correctness.
+  * Aux sends: the tracks no longer add into the aux track's buffer. AudioAux::getData waits for all the
+    sending tracks, then adds their cached output buffers times the send level, in track list order. The
+    result is the same from run to run and does not depend on which thread ran what. (This also changes
+    the serial mode: the sum is in track list order, where it was in processing order before. Same values,
+    maybe a different last bit.)
+  Result on the nine synth test project (4 threads, 512 frames, 44100 Hz): a whole pass 4.0 to 5.1 ms
+  serial, 1.6 to 1.9 ms with 4 threads, no timeouts. The aux sends reach the aux tracks in both modes (a
+  project with two aux tracks and sends on all tracks was checked by looking at the aux buffer peak; the
+  audio was not compared sample by sample, the synths are not repeatable run to run).
+  Not done yet: falling back to serial when the profile says it does not pay (a minimum of 3 tracks is
+  used), a spin before the semaphore wait to cut the wake up time.
+
+Step 3: fix what step 2 needs                                                          DONE
+  * Aux sends summed by the aux track, no shared buffer (see step 2).
+  * VST2: VstTimeInfo is thread_local. The host callbacks go to the instance (effect->user), the other
+    statics (currentPluginId and its semaphore) are only used while a plugin is created.
+  * LV2: the plugin state is per instance; the URID map has a mutex, unmap now takes it too (it read the map
+    while another thread could add to it). lilv is only called from the audio thread for connect_port/run.
+  * DSSI, LADSPA, MESS synths: per instance, no shared state found (read the process paths).
+  * The pool that the audio thread's MidiPlayEvent sets allocate from (libs/memory TypedMemoryPool, one
+    per type and shared by all synths) was not thread safe. It crashed within seconds with LV2 synths on
+    several threads. Now it has a spin lock around alloc and free (a few instructions).
+  * The reference count of EvData (sysex) is atomic, events are copied between threads.
+  * A track can be marked "Process in the Audio Thread Only" (track list, right click on the name, audio
+    tracks; saved in the song as <processSerially>). Such a track is a node that only the audio thread takes,
+    for a plugin that does not work beside others.
+  Tested with the plugins on this machine, each kind in a project of 56 synths and 9 effects in group racks,
+  8 and 16 threads and a few runs each, no crashes, no wait timeouts:
+    LADSPA effects, DSSI effects and synths (Kars, Nekobi), native VST2 effects and synths (Kars, Nekobi),
+    LV2 effects and synths (Kars, Nekobi, synthv1, drumkv1, ZynAddSubFX, reasonablesynth, mda Piano),
+    MESS synths (Organ, DeicsOnze, vam), VST3 (earlier test), with notes played on all synths
+    (MUSE_AUDIO_TEST_NOTES=1 plays a note on every synth track now and then).
+  Not tested: DSSI-VST (wine), plugins with their own GUI threads while running, fluidsynth, a real
+  time priority run (the workers fall back to normal threads without it).
+  The speed up on that project is small (a pass 1.7 ms serial, 1.0 to 1.1 ms parallel), the synths there
+  take 10 to 80 us each, so handing work to threads costs about as much as it saves. The plugin racks of
+  the two groups are the longest chain. It pays for tracks that take longer, like the VST3 test.
+
+Step 4: settings, measuring, display                                                   DONE
+  * Settings > Global Settings > Audio: "Parallel audio threads" (Off, or 2 to 16, including the audio
+    thread) and "Use the threads only when it is faster". Saved in the configuration (audioThreads,
+    audioThreadsAuto). Takes effect at once: the heart beat starts missing workers and tells the audio thread
+    how many to use, nothing needs a restart. Workers are never stopped, they sleep on a semaphore.
+  * Measuring (audioParallelProcess / audioParallelEnd): a cycle is timed from before the tracks to the end of
+    Audio::process1, in parallel and in serial mode. After 8 cycles of each, and every 32nd cycle for the mode
+    not in use, the averages (exponential, 1/8) decide. Serial is the safe mode: parallel is chosen only if it
+    is 10 % faster, and dropped as soon as it is slower. The numbers restart when the tracks or routes change
+    or the number of threads does.
+  * The settings page shows what is happening (off, measuring, parallel with the times of both, serial because
+    it is not faster, not used because there are fewer than 3 tracks), the number of tracks and the longest
+    chain, and a warning if the worker threads have no real time priority. Updated every second while the
+    page is open.
+  * Environment variables, for trying: MUSE_AUDIO_THREADS=<n> overrides the setting and turns the measuring off
+    (always parallel), MUSE_AUDIO_THREADS_AUTO=0|1 overrides the measuring setting. With MUSE_AUDIO_PROFILE the
+    choice is also printed every five seconds. MUSE_AUDIO_TEST_NOTES=1 plays notes on all synths.
+  Tried: forcing 4 threads, the setting from the configuration file, the auto mode on the nine synth project
+  (pass 2.1 ms parallel against 5.2 ms serial, stays parallel), on 56 synths (0.7 ms against 1.7 ms) and on
+  three cheap synths (63 against 56 us, goes serial). The settings page was looked at in a screenshot.
+  Not done: the per track times of the profile are still only on stderr (MUSE_AUDIO_PROFILE).

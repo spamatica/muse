@@ -76,6 +76,7 @@
 #include "midiport.h"
 #include "mididev.h"
 #include "plugin.h"
+#include "audioprofile.h"
 #include "vst3.h"
 #include "wavepreview.h"
 #include "plugin_cache_writer.h"
@@ -1318,6 +1319,9 @@ int main(int argc, char* argv[])
                                      Qt::AlignLeft|Qt::AlignBottom, Qt::yellow);
           qApp->processEvents();
         }
+
+        // Measuring the audio processing, if MUSE_AUDIO_PROFILE is set (see audioprofile.h).
+        MusECore::audioProfileInit();
 
         qDebug() << "->" << qPrintable(QTime::currentTime().toString("hh:mm:ss.zzz"))
                  << "Scan plugins...";

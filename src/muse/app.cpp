@@ -56,6 +56,8 @@
 #include "master/lmaster.h"
 #include "al/dsp.h"
 #include "audio.h"
+#include "audioprofile.h"
+#include "audioparallel.h"
 #include "audiodev.h"
 #include "audioprefetch.h"
 // FIXME Move cliplist into components ?
@@ -1430,6 +1432,9 @@ void MusE::stopHeartBeat()
 
 void MusE::heartBeat()
 {
+    MusECore::audioProfileTick();
+    MusECore::audioParallelTick();
+
     if (cpuLoadToolbar->isVisible())
         cpuLoadToolbar->setValues(MusEGlobal::song->cpuLoad(),
                                   MusEGlobal::song->dspLoad(),

@@ -964,7 +964,7 @@ void VstNativeSynth::setPluginEnabled(AEffect *plugin, bool en)
 
 VstIntPtr VstNativeSynth::pluginHostCallback(VstNativeSynthOrPlugin *userData, VstInt32 opcode, VstInt32 index, VstIntPtr value, void* ptr, float opt)
 {
-   static VstTimeInfo _timeInfo;
+   static thread_local VstTimeInfo _timeInfo; // per thread, plugins can be processed in parallel (audioparallel.h)
 
 #ifdef VST_NATIVE_DEBUG
    if(opcode != audioMasterGetTime)

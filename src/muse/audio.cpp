@@ -35,6 +35,8 @@
 #include "alsamidi.h"
 #include "audioprefetch.h"
 #include "audio.h"
+#include "audioprofile.h"
+#include "audioparallel.h"
 #include "tempo.h"
 #include "wave.h"
 #include "midictrl.h"
@@ -968,6 +970,15 @@ void Audio::process(unsigned frames)
 
 void Audio::process1(unsigned samplePos, unsigned offset, unsigned frames)
       {
+      // For the audio profile report (see audioprofile.h): the time of a whole pass over the tracks.
+      struct CycleTimer {
+        const bool on; const uint64_t start; const unsigned frames;
+        CycleTimer(unsigned f) : on(MusECore::audioProfileEnabled), start(on ? MusECore::audioProfileNow() : 0), frames(f) { }
+        ~CycleTimer() { if(on) MusECore::audioProfileCycle(MusECore::audioProfileNow() - start, frames); }
+      } cycleTimer(frames);
+      // Ends the timing of the cycle for choosing between parallel and serial processing (audioparallel.h).
+      struct ParallelEnd { ~ParallelEnd() { MusECore::audioParallelEnd(); } } parallelEnd;
+
       //
       // process not connected tracks
       // to animate meter display
@@ -1451,6 +1462,10 @@ void Audio::process1(unsigned samplePos, unsigned offset, unsigned frames)
       // Audio processing
       //---------------------------------------------
       
+      // Process the tracks on several threads, if that is turned on (see audioparallel.h).
+      // The serial passes below then find them done.
+      MusECore::audioParallelProcess(samplePos, frames);
+
       // Process Aux tracks first.
       for(AuxList::size_type it = 0; it < aux_tl_sz; ++it) 
       {

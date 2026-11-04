@@ -24,6 +24,7 @@
 #ifndef __EVDATA_H__
 #define __EVDATA_H__
 
+#include <atomic>
 #include "memory.h"
 
 namespace MusECore {
@@ -37,7 +38,7 @@ class SysExInputProcessor;
 
 class EvData {
   private:
-      int* _refCount;
+      std::atomic<int>* _refCount; // atomic: events are copied between threads (parallel audio processing)
       unsigned char* _data;
       int _dataLen;
 

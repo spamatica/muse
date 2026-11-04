@@ -31,6 +31,7 @@
 #include <QUuid>
 
 #include <vector>
+#include <atomic>
 #include <algorithm>
 
 #include "wave.h" // for SndFileR
@@ -47,6 +48,7 @@
 #include "transport_obj.h"
 #include "plugin.h"
 #include "latency_compensator.h"
+#include "audioprofile.h"
 
 
 // Forward declarations:
@@ -626,6 +628,7 @@ class MidiTrack : public Track {
 //---------------------------------------------------------
 
 class AudioTrack : public Track {
+      TrackProfile _profile;   // For the audio profile report, see audioprofile.h.
       bool _haveData; // Whether we have data from a previous process call during current cycle.
       
       CtrlListList _controller;   // Holds all controllers including internal, plugin and synth.
@@ -644,6 +647,8 @@ class AudioTrack : public Track {
       double _curVol2;
       
       bool _prefader;               // prefader metering
+      // Process this track in the audio thread only, never in a worker thread (see audioparallel.h).
+      std::atomic<bool> _processSerially;
       AuxSendValueList _auxSend;
       void readAuxSend(Xml& xml);
       int recFileNumber;
@@ -688,7 +693,10 @@ class AudioTrack : public Track {
       float _previousLatency;
 
       Fifo fifo;                    // fifo -> _recFile
-      bool _processed;
+      // Set by the thread that starts processing the track in a cycle (the claim), see AudioTrack::copyData.
+      std::atomic<bool> _processed;
+      // Set when that thread has finished, so others (parallel processing) know the output buffers are complete.
+      std::atomic<bool> _done;
       
       // Checks for old all green plugin controller colors and changes them
       //  to the new random color scheme.
@@ -717,7 +725,15 @@ class AudioTrack : public Track {
       // Returns whether the monitor was changed.
       virtual bool setRecordFlag2AndCheckMonitor(bool);
 
-      bool processed() { return _processed; }
+      bool processed() { return _processed.load(std::memory_order_acquire); }
+      // Whether the track has been completely processed in this cycle.
+      bool done() const { return _done.load(std::memory_order_acquire); }
+      // Whether the track has data from this cycle (see _haveData). Valid once done().
+      bool haveData() const { return _haveData; }
+      // The cached output of this cycle, see outBuffers. Valid once done().
+      float* const* cachedOutBuffers() const { return outBuffers; }
+      // Waits until another thread has finished processing the track. Only for parallel processing.
+      void waitDone() const;
 
       // Adds a controller. Returns true if successful or false if error.
       // Note that it will fail if the controller already exists.
@@ -798,7 +814,10 @@ class AudioTrack : public Track {
       double gain() const;
       void setGain(double val);
 
+      TrackProfile& profile()            { return _profile; }
       bool prefader() const              { return _prefader; }
+      bool processSerially() const       { return _processSerially.load(std::memory_order_relaxed); }
+      void setProcessSerially(bool v)    { _processSerially.store(v, std::memory_order_relaxed); }
       double auxSend(int idx) const;
       void setAuxSend(int idx, double v);
       void addAuxSend(int n);

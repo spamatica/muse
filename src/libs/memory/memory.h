@@ -26,6 +26,8 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <atomic>
+#include <sched.h>
 
 // NOTE: Keep this code in case we need a dimensioned pool!
 #if 0
@@ -122,6 +124,16 @@ template <typename T, int itemsPerChunk> class TypedMemoryPool
             };
       Chunk* chunks;
       Verweis* head;
+      // The pools are shared by all the instances that use the allocator, and with parallel audio processing
+      //  (audioparallel.h) several threads can allocate at once. Holding it takes a few instructions.
+      std::atomic_flag _lock = ATOMIC_FLAG_INIT;
+      void lock()
+      {
+        for(int spins = 0; _lock.test_and_set(std::memory_order_acquire); ++spins)
+          if(spins > 100)
+            sched_yield();
+      }
+      void unlock() { _lock.clear(std::memory_order_release); }
       TypedMemoryPool(TypedMemoryPool&);
       void operator=(TypedMemoryPool&);
       
@@ -170,10 +182,12 @@ template <typename T, int itemsPerChunk> class TypedMemoryPool
                 (unsigned int)items);
           exit(-1);
         }
+        lock();
         if(head == 0)
           grow();
         Verweis* p = head;
         head = p->next;
+        unlock();
         return p;
       }
       
@@ -188,8 +202,10 @@ template <typename T, int itemsPerChunk> class TypedMemoryPool
           exit(-1);
         }
         Verweis* p = static_cast<Verweis*>(b);
+        lock();
         p->next = head;
         head = p;
+        unlock();
       }
 };
 

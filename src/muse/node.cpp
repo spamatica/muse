@@ -44,6 +44,8 @@
 #include "wavepreview.h"
 #include "al/dsp.h"
 #include "latency_compensator.h"
+#include "audioprofile.h"
+#include "audioparallel.h"
 
 // REMOVE Tim. Persistent routes. Added. Make this permanent later if it works OK and makes good sense.
 #define _USE_SIMPLIFIED_SOLO_CHAIN_
@@ -340,9 +342,33 @@ void AudioTrack::updateSoloStates(bool noDec)
   _nodeTraversed = false; // Reset.
 }
 
+//---------------------------------------------------------
+//   waitDone
+//    Another thread is processing this track, wait for it. The graph has no cycles so it cannot be waiting for us.
+//    The wait is bounded, so a mistake costs a glitch and not a hung audio thread.
+//---------------------------------------------------------
+
+void AudioTrack::waitDone() const
+{
+  // Without parallel processing a track that is not done is one this very thread is in the middle of.
+  if(!MusECore::audioParallelRunning.load(std::memory_order_acquire) || _done.load(std::memory_order_acquire))
+    return;
+  const uint64_t start = MusECore::audioProfileNow();
+  while(!_done.load(std::memory_order_acquire))
+  {
+    if(MusECore::audioProfileNow() - start > 50000000ULL) // 50 ms
+    {
+      fprintf(stderr, "MusE: AudioTrack::waitDone: timeout waiting for track %s\n", name().toLocal8Bit().constData());
+      return;
+    }
+    sched_yield();
+  }
+}
+
 void AudioTrack::preProcessAlways()
 { 
   _processed = false;
+  _done = false;
   Track::preProcessAlways();
 }
 
@@ -851,8 +877,17 @@ void AudioTrack::copyData(unsigned pos,
     #endif
 
   // Have we been here already during this process cycle?
-  if(processed())
+  // The first caller claims the track. With parallel processing (audioparallel.h) several threads may get
+  //  here at once, the others then wait until the claimant has finished, so the output buffers are complete.
+  bool first = false;
+  if(!_processed.load(std::memory_order_acquire))
   {
+    bool expected = false;
+    first = _processed.compare_exchange_strong(expected, true, std::memory_order_acq_rel);
+  }
+  if(!first)
+  {
+    waitDone();
     // Is there already some data gathered from a previous call during this process cycle?
     if(_haveData)
     {
@@ -999,7 +1034,14 @@ void AudioTrack::copyData(unsigned pos,
     // First time here during this process cycle.
 
     _haveData = false;  // Reset.
-    _processed = true;  // Set this now.
+    // _processed was set above, by the claim.
+    // Tells the others the output buffers are complete, whichever way this function returns.
+    struct DoneGuard {
+      std::atomic<bool>& d;
+      ~DoneGuard() { d.store(true, std::memory_order_release); }
+    } doneGuard { _done };
+    // Counts the time this track needs, apart from the tracks it gets its data from (see audioprofile.h).
+    ProfileScope profileScope(this);
 
     // Start by clearing the meters. There may be multiple contributions to them below.
     for(i = 0; i < trackChans; ++i)
@@ -1159,40 +1201,7 @@ void AudioTrack::copyData(unsigned pos,
     // aux sends
     //---------------------------------------------------
 
-    if(hasAuxSend())
-    {
-      AuxList* al = MusEGlobal::song->auxs();
-      unsigned naux = al->size();
-      for(unsigned k = 0; k < naux; ++k)
-      {
-        double m = _auxSend[k];
-        if(m <= 0.0001)           // optimize
-          continue;
-        AudioAux* a = (AudioAux*)((*al)[k]);
-        float** dst = a->sendBuffer();
-        int auxChannels = a->channels();
-        if((trackChans ==1 && auxChannels==1) || trackChans == 2)
-        {
-          for(int ch = 0; ch < trackChans; ++ch)
-          {
-            float* db = dst[ch % a->channels()]; // no matter whether there's one or two dst buffers
-            float* sb = outBuffers[ch];
-            for(unsigned f = 0; f < nframes; ++f)
-              *db++ += (*sb++ * m);   // add to mix
-          }
-        }
-        else if(trackChans==1 && auxChannels==2)  // copy mono to both channels
-        {
-          for(int ch = 0; ch < auxChannels; ++ch)
-          {
-            float* db = dst[ch % a->channels()];
-            float* sb = outBuffers[0];
-            for(unsigned f = 0; f < nframes; ++f)
-              *db++ += (*sb++ * m);   // add to mix
-          }
-        }
-      }
-    }
+    // Nothing to do here. The aux tracks add up the sends of the tracks, in AudioAux::getData.
 
     //---------------------------------------------------
     //    copy to destination buffers

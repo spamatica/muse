@@ -8009,6 +8009,8 @@ LV2_URID LV2UridBiMap::map(const char *uri)
 
 const char *LV2UridBiMap::unmap(uint32_t id)
 {
+    // Another thread may be adding to the map (map() above), and plugins run on several threads.
+    QMutexLocker locker(&idLock);
     LV2_SYNTH_URID_RMAP::iterator it = _rmap.find ( id );
     if ( it != _rmap.end() ) {
         return it->second;

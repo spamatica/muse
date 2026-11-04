@@ -32,6 +32,7 @@
 #include <QLocale>
 #include <QCollator>
 #include <QMessageBox>
+#include <QTimer>
 
 #include "genset.h"
 #include "app.h"
@@ -48,6 +49,7 @@
 #include "song.h"
 #include "operations.h"
 #include "audio.h"
+#include "audioparallel.h"
 #include "audio_converter_settings.h"
 //#include "audio_convert/audio_converter_plugin.h"
 #include "audio_convert/audio_converter_settings_group.h"
@@ -96,6 +98,11 @@ GlobalSettingsConfig::GlobalSettingsConfig(QWidget* parent)
       recDrumGroup->addButton(dontRecMutedButton, MusECore::DONT_REC_MUTED);
       recDrumGroup->addButton(dontRecBothButton, MusECore::DONT_REC_MUTED_OR_HIDDEN);
       
+      // The state of the parallel audio processing, as it changes with the project.
+      QTimer* parallelTimer = new QTimer(this);
+      connect(parallelTimer, &QTimer::timeout, this, &GlobalSettingsConfig::updateAudioParallelStatus);
+      parallelTimer->start(1000);
+
       updateSettings();
       
       projDirOpenToolButton->setIcon(*fileopenSVGIcon);
@@ -515,6 +522,8 @@ void GlobalSettingsConfig::updateSettings()
       denormalCheckBox->setChecked(MusEGlobal::config.useDenormalBias);
       outputLimiterCheckBox->setChecked(MusEGlobal::config.useOutputLimiter);
       vstInPlaceCheckBox->setChecked(MusEGlobal::config.vstInPlace);
+      audioThreadsSpinBox->setValue(MusEGlobal::config.audioThreads < 2 ? 0 : MusEGlobal::config.audioThreads);
+      audioThreadsAutoCheckBox->setChecked(MusEGlobal::config.audioThreadsAuto);
       revertPluginNativeGUIScalingCheckBox->setChecked(MusEGlobal::config.noPluginScaling);
 //      openMDIWinMaximizedCheckBox->setChecked(MusEGlobal::config.openMDIWinMaximized);
       keepTransportWindowOnTopCheckBox->setChecked(MusEGlobal::config.keepTransportWindowOnTop);
@@ -602,6 +611,46 @@ void GlobalSettingsConfig::showEvent(QShowEvent* e)
 {
   QDialog::showEvent(e);
   updateSettings();
+  updateAudioParallelStatus();
+}
+
+//---------------------------------------------------------
+//   updateAudioParallelStatus
+//---------------------------------------------------------
+
+void GlobalSettingsConfig::updateAudioParallelStatus()
+{
+  if(!isVisible())
+    return;
+  const MusECore::AudioParallelStatus st = MusECore::audioParallelStatus();
+  const auto ms = [](double us) { return QString::number(us / 1000.0, 'f', 2); };
+  QString text;
+  switch(st.state)
+  {
+    case MusECore::AudioParallelStatus::Off:
+      text = tr("Parallel processing is off.");
+    break;
+    case MusECore::AudioParallelStatus::Measuring:
+      text = tr("Parallel processing on %1 threads. Measuring...").arg(st.threads);
+    break;
+    case MusECore::AudioParallelStatus::Parallel:
+      text = tr("Processing on %1 threads. A pass over the tracks takes %2 ms").arg(st.threads).arg(ms(st.parallelUs));
+      if(st.serialUs > 0.0)
+        text += tr(" (%1 ms in the audio thread alone)").arg(ms(st.serialUs));
+      text += tr(". %1 tracks, the longest chain has %2.").arg(st.tracks).arg(st.longestChain);
+    break;
+    case MusECore::AudioParallelStatus::SerialAuto:
+      text = tr("Not using the threads, they are not faster for this project. A pass over the tracks takes %1 ms "
+                "in the audio thread alone, %2 ms with %3 threads. %4 tracks, the longest chain has %5.")
+             .arg(ms(st.serialUs)).arg(ms(st.parallelUs)).arg(st.threads).arg(st.tracks).arg(st.longestChain);
+    break;
+    case MusECore::AudioParallelStatus::TooSmall:
+      text = tr("Not used: fewer than three audio tracks, or too many, or the tracks depend on each other in a loop.");
+    break;
+  }
+  if(st.threads >= 2 && !st.realTime)
+    text += tr(" The worker threads do not have real time priority, expect dropouts.");
+  audioParallelStatusLabel->setText(text);
 }
 
 //---------------------------------------------------------
@@ -630,6 +679,9 @@ void GlobalSettingsConfig::apply()
       
       MusEGlobal::config.projectBaseFolder = projDirEntry->text();
       
+      MusEGlobal::config.audioThreads = audioThreadsSpinBox->value() < 2 ? 0 : audioThreadsSpinBox->value();
+      MusEGlobal::config.audioThreadsAuto = audioThreadsAutoCheckBox->isChecked();
+
       MusEGlobal::config.enableLatencyCorrection = enableLatencyCorrectionButton->isChecked();
       MusEGlobal::config.correctUnterminatedInBranchLatency = latencyInBranchUntermButton->isChecked();
       MusEGlobal::config.correctUnterminatedOutBranchLatency = latencyOutBranchUntermButton->isChecked();

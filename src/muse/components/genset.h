@@ -66,6 +66,7 @@ class GlobalSettingsConfig : public QDialog, public Ui::GlobalSettingsDialogBase
       void startSongReset();
       void showAudioConverterSettings();
       void updateBackendDeviceSettings();
+      void updateAudioParallelStatus();
       // Update the midi starting note range.
       void updateStartingMidiNote(const MusECore::NoteNameList &nnl);
       void updateNoteNames(const MusECore::NoteNameList &nnl);
