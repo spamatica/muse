@@ -246,8 +246,8 @@ Arranger::Arranger(ArrangerView* parent, const char* name)
       setObjectName(name);
 
       _canvasXOrigin = DefaultCanvasXOrigin;
-      //_minXMag = -2000;
-      _minXMag = -500;
+      // 500 only reached ~17 min on screen at 120 bpm; allow multi-hour recordings.
+      _minXMag = -8000;
       _maxXMag = -5;
       QList<Rasterizer::Column> rast_cols;
       rast_cols <<
