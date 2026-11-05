@@ -629,7 +629,12 @@ QStringList pluginGetVst3Directories()
   const QString vst3Path = QString::fromLocal8Bit(qgetenv("VST3_PATH"));
 #endif
   if(!vst3Path.isEmpty())
+// QString::*EmptyParts is deprecated, use Qt::*EmptyParts, new as of 5.14.
+#if QT_VERSION >= 0x050e00
+    return vst3Path.split(QLatin1Char(':'), Qt::SkipEmptyParts);
+#else
     return vst3Path.split(QLatin1Char(':'), QString::SkipEmptyParts);
+#endif
 
   const QString homePath = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
   if(!homePath.isEmpty())

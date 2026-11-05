@@ -437,7 +437,8 @@ GlobalConfigValues config = {
       true,                         // audioAutomationOptimize
       2,                            // audioAutomationPointRadius
       false,                        // recordOggVorbis
-      0.4                           // recordOggVorbisQuality
+      0.4,                          // recordOggVorbisQuality
+      QString()                     // deviceAudioAlsaDevice (empty means "default")
 };
 
 } // namespace MusEGlobal
