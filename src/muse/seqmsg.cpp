@@ -751,11 +751,11 @@ void Audio::msgSetSendMetronome(AudioTrack* track, bool b)
 //    start bounce operation
 //---------------------------------------------------------
 
-void Audio::msgBounce()
+void Audio::msgBounce(const Pos* startPos)
       {
       if (!MusEGlobal::checkAudioDevice()) return;
 
-      MusEGlobal::audioDevice->seekTransport(MusEGlobal::song->lPos());
+      MusEGlobal::audioDevice->seekTransport(startPos ? *startPos : MusEGlobal::song->lPos());
       // Wait until seek takes effect.
       msgAudioWait();
       msgAudioWait();

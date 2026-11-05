@@ -3237,6 +3237,15 @@ void PartCanvas::drawItem(QPainter& p, const CItem* item, const QRect& mr, const
         p.fillRect(mbbr & mr, brush);   // Respect the requested drawing rectangle. Gives speed boost!
       }
 
+      // Parts on a frozen track are not editable. Draw them with an ice-blue tint and hatching.
+      if(part->track()->type() == MusECore::Track::WAVE &&
+         static_cast<const MusECore::WaveTrack*>(part->track())->frozen())
+      {
+        p.setPen(Qt::NoPen);
+        p.fillRect(mbbr & mr, QColor(90, 190, 255, 80));
+        p.fillRect(mbbr & mr, QBrush(QColor(210, 240, 255, 150), Qt::BDiagPattern));
+      }
+
       p.setWorldMatrixEnabled(true);
 
       MusECore::Track::TrackType type = part->track()->type();

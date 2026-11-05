@@ -75,6 +75,7 @@ class TList : public QWidget {
 //          COL_TIMELOCK,
           COL_AUTOMATION,
           COL_CLEF,
+          COL_FREEZE,
           COL_CUSTOM_MIDICTRL_OFFSET,
           COL_NONE = -1
           };

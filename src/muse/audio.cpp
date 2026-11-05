@@ -144,6 +144,7 @@ Audio::Audio()
       idle          = false;
       _freewheel    = false;
       _bounceState  = BounceOff;
+      _freezeEndFrame = 0;
       _loopFrame    = 0;
       _loopCount    = 0;
       m_Xruns       = 0;
@@ -843,9 +844,11 @@ void Audio::process(unsigned frames)
       
       if (isPlaying()) {
             if (!freewheel())
-                  MusEGlobal::audioPrefetch->msgTick(isRecording(), true);
+                  MusEGlobal::audioPrefetch->msgTick(isRecording() || MusEGlobal::song->freezeTrack, true);
 
-            if (bounce() && _pos >= MusEGlobal::song->rPos()) {
+            if (bounce() && (MusEGlobal::song->freezeTrack ?
+                             _pos.frame() >= _freezeEndFrame :
+                             _pos >= MusEGlobal::song->rPos())) {
                   // Need to let the resulting stopRolling take care of resetting bounce.
                   //_bounceState = BounceOff;
                   // This is safe in both Jack 1 and 2.
@@ -1705,6 +1708,9 @@ void Audio::writeTick()
         if(ao->recordFlag())
           ao->record();
       }
+      AudioTrack* ft = MusEGlobal::song->freezeTrack;
+      if(ft)
+        ft->freezeWriteTick();
       WaveTrackList* tl = MusEGlobal::song->waves();
       for (iWaveTrack t = tl->begin(); t != tl->end(); ++t) {
             WaveTrack* track = *t;
@@ -1753,6 +1759,19 @@ void Audio::startRolling()
                           }
                     }
               }
+        else if(MusEGlobal::song->freezeTrack && freewheel())
+        {
+          // Freezing a track renders the song offline like a bounce, but is not a recording.
+          // The prefetch after the seek has read ahead in the wave files, which are read
+          //  directly while freewheeling. Position them at the start, or the track would play too early.
+          WaveTrackList* tracks = MusEGlobal::song->waves();
+          for (iWaveTrack i = tracks->begin(); i != tracks->end(); ++i) {
+                WaveTrack* track = *i;
+                track->clearPrefetchFifo();
+                track->setPrefetchWritePos(_pos.frame());
+                track->seekData(_pos.frame());
+          }
+        }
       }
 
       state = PLAY;
@@ -1851,7 +1870,7 @@ void Audio::abortRolling()
 
       // There may be disk read/write fifo buffers waiting to be emptied. Send one last tick to the disk thread.
       if(!freewheel())
-        MusEGlobal::audioPrefetch->msgTick(recording, false); // This does not wait.
+        MusEGlobal::audioPrefetch->msgTick(recording || MusEGlobal::song->freezeTrack, false); // This does not wait.
       
       WaveTrackList* tracks = MusEGlobal::song->waves();
       for (iWaveTrack i = tracks->begin(); i != tracks->end(); ++i) {
@@ -1911,7 +1930,7 @@ void Audio::stopRolling()
 
       // There may be disk read/write fifo buffers waiting to be emptied. Send one last tick to the disk thread.
       if(!freewheel())
-        MusEGlobal::audioPrefetch->msgTick(recording, false); // This does not wait.
+        MusEGlobal::audioPrefetch->msgTick(recording || MusEGlobal::song->freezeTrack, false); // This does not wait.
       
       WaveTrackList* tracks = MusEGlobal::song->waves();
       for (iWaveTrack i = tracks->begin(); i != tracks->end(); ++i) {

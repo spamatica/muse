@@ -77,6 +77,8 @@ QIcon* headphonesOnSVGIcon;
 
 QIcon* muteOffSVGIcon;
 QIcon* muteOnSVGIcon;
+QIcon* freezeOnSVGIcon;
+QIcon* freezeOffSVGIcon;
 QIcon* muteOnXSVGIcon;
 QIcon* muteProxyOnSVGIcon;
 QIcon* muteAndProxyOnSVGIcon;
@@ -423,6 +425,8 @@ void initIcons(int cursorSize, const QString& gpath, const QString& upath)
 
     muteOffSVGIcon = icons.getSVG("mute_off.svg");
     muteOnSVGIcon = icons.getSVG("mute_on.svg");
+    freezeOnSVGIcon = icons.getSVG("freeze_on.svg");
+    freezeOffSVGIcon = icons.getSVG("freeze_off.svg");
     muteOnXSVGIcon = icons.getSVG("mute_on_X.svg");
     muteProxyOnSVGIcon = icons.getSVG("mute_proxy_on.svg");
     muteAndProxyOnSVGIcon = icons.getSVG("mute_and_proxy_on.svg");
@@ -751,6 +755,8 @@ void deleteIcons()
 
     delete muteOffSVGIcon;
     delete muteOnSVGIcon;
+    delete freezeOnSVGIcon;
+    delete freezeOffSVGIcon;
     delete muteOnXSVGIcon;
     delete muteProxyOnSVGIcon;
     delete muteAndProxyOnSVGIcon;

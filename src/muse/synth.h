@@ -261,6 +261,9 @@ class SynthI : public AudioTrack, public MidiDevice,
       virtual unsigned int pbForwardShiftFrames() const;
 
    public:
+      // Called each cycle instead of processing while the track is frozen: Discards the playback
+      //  events that would have been processed, and keeps the user events from piling up.
+      void discardEvents();
       friend class SynthIF;
       friend class MessSynthIF;
       friend class DssiSynthIF;

@@ -294,6 +294,11 @@ AudioTrack::AudioTrack(TrackType t, int channels)
       _latencyComp = new LatencyCompensator();
       _recFilePos = 0;
       _previousLatency = 0.0f;
+      _frozen = false;
+      _frozenWritePos = ~0U;
+      _frozenDirectPos = -1;
+      _freezeCapturing = false;
+      _freezeFilePos = -1;
 
       _processed = false;
       _done = false;
@@ -343,6 +348,11 @@ AudioTrack::AudioTrack(const AudioTrack& t, int flags)
       _latencyComp = new LatencyCompensator();
       _recFilePos = 0;
       _previousLatency = 0.0f;
+      _frozen = false;
+      _frozenWritePos = ~0U;
+      _frozenDirectPos = -1;
+      _freezeCapturing = false;
+      _freezeFilePos = -1;
 
       _processed      = false;
       _done           = false;
@@ -1882,6 +1892,8 @@ void AudioTrack::writeProperties(int level, Xml& xml) const
       Track::writeProperties(level, xml);
       xml.intTag(level, "prefader", prefader());
       xml.intTag(level, "sendMetronome", sendMetronome());
+      if(frozen())
+        xml.strTag(level, "frozenFile", _frozenFileName);
       if(processSerially())
         xml.intTag(level, "processSerially", 1);
       xml.intTag(level, "automation", int(automationType()));
@@ -2073,6 +2085,13 @@ bool AudioTrack::readProperties(Xml& xml, const QString& tag)
             _prefader = xml.parseInt();
       else if (tag == "sendMetronome")
             _sendMetronome = xml.parseInt();
+      else if (tag == "frozenFile")
+      {
+            // If the file is missing or does not match, the track just stays unfrozen.
+            const QString f = xml.parse1();
+            if(!f.isEmpty())
+              freezeSetFile(f);
+      }
       else if (tag == "processSerially")
             _processSerially = xml.parseInt();
       else if (tag == "gain")

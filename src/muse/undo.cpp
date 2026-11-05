@@ -37,6 +37,8 @@
 #include "wave_helper.h"
 #include "gconfig.h"
 #include "al/al.h"
+#include "app.h"
+#include <QMessageBox>
 
 #include <set>
 
@@ -2175,11 +2177,74 @@ bool Song::applyOperation(const UndoOp& op, OperationType type, void* sender)
 	return applyOperationGroup(operations, type, sender);
 }
 
+//---------------------------------------------------------
+//   opTouchesFrozenTrack
+//    Whether the operation would edit the parts or events of a frozen track.
+//    Frozen tracks play a rendered file, so editing what they were rendered from is not allowed
+//     until they are unfrozen.
+//---------------------------------------------------------
+
+static bool opTouchesFrozenTrack(const UndoOp& op)
+{
+  switch(op.type)
+  {
+    case UndoOp::AddPart:
+    case UndoOp::DeletePart:
+    case UndoOp::MovePart:
+    case UndoOp::ModifyPartStart:
+    case UndoOp::ModifyPartLength:
+    case UndoOp::ModifyPartName:
+    case UndoOp::ModifyPartVolume:
+    case UndoOp::ModifyPartFadeIn:
+    case UndoOp::ModifyPartFadeOut:
+    case UndoOp::AddEvent:
+    case UndoOp::DeleteEvent:
+    case UndoOp::ModifyEvent:
+    case UndoOp::ModifyClip:
+    break;
+    default:
+      return false;
+  }
+
+  const auto frozen_track = [](const Track* t) {
+    return t && !t->isMidiTrack() && static_cast<const AudioTrack*>(t)->frozen();
+  };
+
+  if(op.part && frozen_track(op.part->track()))
+    return true;
+  // A part can also be moved to another track.
+  if(op.type == UndoOp::MovePart && frozen_track(op.track))
+    return true;
+  return false;
+}
+
 bool Song::applyOperationGroup(Undo& group, OperationType type, void* sender)
 {
   bool ret = false;
   if (!group.empty())
   {
+    // Remove any operations that would edit a frozen track.
+    bool removed_frozen = false;
+    for(iUndoOp iu = group.begin(); iu != group.end(); )
+    {
+      if(opTouchesFrozenTrack(*iu))
+      {
+        iu = group.erase(iu);
+        removed_frozen = true;
+      }
+      else
+        ++iu;
+    }
+    if(removed_frozen)
+    {
+      QMessageBox::information(MusEGlobal::muse, tr("Frozen track"),
+        tr("Parts on a frozen track can not be edited.\nUnfreeze the track first."));
+      // Let the views refresh, in case they were showing a move or change that did not happen.
+      update(SC_PART_MODIFIED);
+      if(group.empty())
+        return false;
+    }
+
     // We don't use this here in applyOperationGroup or its call sequence.
     undoMode = false;
 

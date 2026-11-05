@@ -327,6 +327,24 @@ class Song : public QObject {
       bool dirty;
       WaveTrack* bounceTrack;
       AudioOutput* bounceOutput;
+      // The track being rendered by a freeze. See freeze.cpp.
+      AudioTrack* freezeTrack;
+      // The number of frames a freeze must render. Set when the freeze is started.
+      int64_t freezeFrames;
+      // True when the user cancelled the freeze in progress.
+      bool freezeCancelled;
+      // Start freezing a wave or synth track. Returns true on error (a message has been shown).
+      bool freezeTrackStart(AudioTrack*);
+      // Finish a freeze. Called when the transport has stopped.
+      void freezeTrackFinish();
+      // Make a frozen track play its normal processing again.
+      void unfreezeTrack(AudioTrack*);
+      // Ask for confirmation, then freeze with a modal progress dialog. Used by the GUI.
+      void freezeTrackInteractive(AudioTrack*);
+      // Ask for confirmation, then unfreeze. Used by the GUI.
+      void unfreezeTrackInteractive(AudioTrack*);
+      // Abort a freeze in progress. The track is left unfrozen.
+      void freezeTrackCancel();
       void updatePos();
 
       void read(Xml&, bool isTemplate=false);

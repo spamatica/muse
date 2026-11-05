@@ -190,6 +190,7 @@ void Arranger::setHeaderToolTips()
 //    header->setToolTip(TList::COL_TIMELOCK,   tr("Time lock"));
     header->setToolTip(TList::COL_AUTOMATION, tr("Automation parameter selection"));
     header->setToolTip(TList::COL_CLEF,       tr("Notation clef"));
+    header->setToolTip(TList::COL_FREEZE,     tr("Freeze track"));
 }
 
 
@@ -213,6 +214,7 @@ void Arranger::setHeaderWhatsThis()
     header->setWhatsThis(TList::COL_OPORT,    tr("Midi/Drum track: Output port.\nSynth track: Right-click to show GUI."));
 //    header->setWhatsThis(TList::COL_TIMELOCK, tr("Time lock"));
     header->setWhatsThis(TList::COL_CLEF,     tr("Notation clef. Select this tracks notation clef."));
+    header->setWhatsThis(TList::COL_FREEZE,   tr("Freeze track. Click to render the track with its effects to a wave file\nthat is played instead, saving CPU. Click again to unfreeze.\nParts of a frozen track can not be edited."));
 }
 
 //---------------------------------------------------------
@@ -233,6 +235,7 @@ void Arranger::setHeaderStatusTips()
 //    header->setStatusTip(TList::COL_TIMELOCK, tr("Time lock"));
     header->setStatusTip(TList::COL_AUTOMATION, tr("Automation: RMB to select parameters."));
     header->setStatusTip(TList::COL_CLEF,     tr("Notation clef: RMB to select this track's notation clef."));
+    header->setStatusTip(TList::COL_FREEZE,   tr("Freeze track: Click to freeze or unfreeze a wave or synth track."));
 }
 
 //---------------------------------------------------------
@@ -606,6 +609,7 @@ void Arranger::initTracklistHeader()
 //    header->setColumnLabel(tr("T"), TList::COL_TIMELOCK);
     header->setColumnLabel(tr("Automation"), TList::COL_AUTOMATION);
     header->setColumnLabel(tr("Clef"), TList::COL_CLEF);
+    header->setColumnIcon(*freezeOnSVGIcon, TList::COL_FREEZE);
     for (unsigned i = 0; i < custom_columns.size(); i++)
         header->setColumnLabel(custom_columns[i].name, TList::COL_CUSTOM_MIDICTRL_OFFSET + i);
 
@@ -621,6 +625,7 @@ void Arranger::initTracklistHeader()
 //    header->setSectionResizeMode(TList::COL_TIMELOCK, QHeaderView::Fixed);
     header->setSectionResizeMode(TList::COL_AUTOMATION, QHeaderView::Interactive);
     header->setSectionResizeMode(TList::COL_CLEF, QHeaderView::Interactive);
+    header->setSectionResizeMode(TList::COL_FREEZE, QHeaderView::Fixed);
     for (unsigned i = 0; i < custom_columns.size(); i++)
         header->setSectionResizeMode(TList::COL_CUSTOM_MIDICTRL_OFFSET+i, QHeaderView::Interactive);
 
@@ -691,6 +696,7 @@ void Arranger::setHeaderSizes()
 //    header->resizeSection(TList::COL_TIMELOCK, header->sectionSizeHint(TList::COL_TIMELOCK) + fw);
     header->resizeSection(TList::COL_AUTOMATION, qMax(header->sectionSizeHint(TList::COL_AUTOMATION) + fw, 80));
     header->resizeSection(TList::COL_CLEF, qMax(header->sectionSizeHint(TList::COL_CLEF) + fw, 50));
+    header->resizeSection(TList::COL_FREEZE, header->sectionSizeHint(TList::COL_FREEZE));
 
     for (unsigned i = 0; i < custom_columns.size(); i++)
         header->resizeSection(TList::COL_CUSTOM_MIDICTRL_OFFSET + i, qMax(header->sectionSizeHint(TList::COL_CUSTOM_MIDICTRL_OFFSET + i) + fw, 30));

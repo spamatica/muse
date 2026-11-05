@@ -558,6 +558,15 @@ void TList::paint(const QRect& r)
                 }
                     break;
 
+                case COL_FREEZE:
+                    if (!track->isMidiTrack() && static_cast<MusECore::AudioTrack*>(track)->canFreeze())
+                    {
+                        const MusECore::AudioTrack* at = static_cast<const MusECore::AudioTrack*>(track);
+                        (at->frozen() || at->freezeCapturing() ? freezeOnSVGIcon : freezeOffSVGIcon)->
+                            paint(&p, svg_r, Qt::AlignCenter, QIcon::Normal, QIcon::On);
+                    }
+                    break;
+
                 case COL_CLEF:
                 {
                     QString s;
@@ -2083,7 +2092,7 @@ void TList::mousePressEvent(QMouseEvent* ev)
     // A plain left click on the automation column selects the track and then also opens the automation menu.
     const bool automationLeftClick = button == Qt::LeftButton && col == COL_AUTOMATION && !ctrl && !shift;
 
-    if (button == Qt::LeftButton && col != COL_INPUT_MONITOR && col != COL_RECORD && col != COL_MUTE && col != COL_SOLO)
+    if (button == Qt::LeftButton && col != COL_INPUT_MONITOR && col != COL_RECORD && col != COL_MUTE && col != COL_SOLO && col != COL_FREEZE)
     {
         mode = START_DRAG;  // Allow a track drag to start.
 
@@ -2150,7 +2159,7 @@ void TList::mousePressEvent(QMouseEvent* ev)
         MusEGlobal::song->update(SC_TRACK_SELECTION);
     }
 
-    if (!(button == Qt::LeftButton && col != COL_INPUT_MONITOR && col != COL_RECORD && col != COL_MUTE && col != COL_SOLO)
+    if (!(button == Qt::LeftButton && col != COL_INPUT_MONITOR && col != COL_RECORD && col != COL_MUTE && col != COL_SOLO && col != COL_FREEZE)
         || automationLeftClick)
     {
         switch (col) {
@@ -2477,6 +2486,20 @@ void TList::mousePressEvent(QMouseEvent* ev)
             break;
         }
 
+        case COL_FREEZE:
+        {
+            // Freeze or unfreeze a wave or synth track.
+            if (button == Qt::LeftButton && !t->isMidiTrack())
+            {
+                MusECore::AudioTrack* at = static_cast<MusECore::AudioTrack*>(t);
+                if (at->frozen())
+                    MusEGlobal::song->unfreezeTrackInteractive(at);
+                else if (at->canFreeze() && !at->freezeCapturing())
+                    MusEGlobal::song->freezeTrackInteractive(at);
+            }
+            break;
+        }
+
         case COL_SOLO:
         {
             bool state = !t->solo();
@@ -2571,6 +2594,15 @@ void TList::mousePressEvent(QMouseEvent* ev)
                     a->setCheckable(true);
                     a->setChecked(static_cast<MusECore::AudioTrack*>(t)->processSerially());
                     a->setData(1030);
+
+                    MusECore::AudioTrack* fat = static_cast<MusECore::AudioTrack*>(t);
+                    if(fat->frozen() || fat->canFreeze())
+                    {
+                        a = p->addAction(*(fat->frozen() ? freezeOnSVGIcon : freezeOffSVGIcon),
+                                         fat->frozen() ? tr("Unfreeze Track") : tr("Freeze Track"));
+                        a->setEnabled(!fat->freezeCapturing());
+                        a->setData(1031);
+                    }
                 }
 
                 p->addSeparator();
@@ -2633,6 +2665,15 @@ void TList::mousePressEvent(QMouseEvent* ev)
                             MusECore::AudioTrack* at = static_cast<MusECore::AudioTrack*>(t);
                             at->setProcessSerially(!at->processSerially());
                             MusEGlobal::song->setDirty();
+                        }
+                            break;
+                        case 1031:     // freeze or unfreeze
+                        {
+                            MusECore::AudioTrack* at = static_cast<MusECore::AudioTrack*>(t);
+                            if(at->frozen())
+                                MusEGlobal::song->unfreezeTrackInteractive(at);
+                            else
+                                MusEGlobal::song->freezeTrackInteractive(at);
                         }
                             break;
                         case 1004:

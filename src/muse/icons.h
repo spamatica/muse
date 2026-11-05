@@ -67,6 +67,8 @@ extern QIcon* headphonesOnSVGIcon;
 
 extern QIcon* muteOffSVGIcon;
 extern QIcon* muteOnSVGIcon;
+extern QIcon* freezeOnSVGIcon;
+extern QIcon* freezeOffSVGIcon;
 extern QIcon* muteOnXSVGIcon;
 extern QIcon* muteProxyOnSVGIcon;
 extern QIcon* muteAndProxyOnSVGIcon;

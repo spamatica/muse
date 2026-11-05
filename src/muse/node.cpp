@@ -1048,6 +1048,8 @@ void AudioTrack::copyData(unsigned pos,
       _meter[i] = 0.0;
 
     const bool isOff = off();
+    // A frozen track plays its frozen file instead of processing. See freeze.cpp.
+    const bool isFrozenPlay = !isOff && frozen();
     // If this is a synth track, set the synth plugin active or inactive as appropriate.
     if(isSynthTrack())
     {
@@ -1057,7 +1059,7 @@ void AudioTrack::copyData(unsigned pos,
       {
         // Activate or deactivate the plugin now, depending on the desired track and plugin active states.
         // The two calls will do nothing if already in the desired state.
-        if(isOff)
+        if(isOff || isFrozenPlay)
           sif->deactivate();
         else
           sif->activate();
@@ -1108,7 +1110,17 @@ void AudioTrack::copyData(unsigned pos,
     //  so still call getData before it. Off is NOT meant to be toggled rapidly, but mute is !
     // Since the meters are cleared above, getData can contribute (add) to them directly and return HaveMeterDataOnly
     //  if it does not want to pass the audio for listening.
-    if(!getData(pos, srcTotalOutChans, nframes, buffer))
+    bool frozenHaveData = false;
+    if(isFrozenPlay)
+    {
+      // The synth is not processed, so discard the events it would have received.
+      if(isSynthTrack())
+        static_cast<SynthI*>(this)->discardEvents();
+      if(MusEGlobal::audio->isPlaying())
+        frozenHaveData = frozenFetch(pos, trackChans, nframes, buffer);
+    }
+
+    if(isFrozenPlay ? !frozenHaveData : !getData(pos, srcTotalOutChans, nframes, buffer))
     {
       #ifdef NODE_DEBUG_PROCESS
       fprintf(stderr, "MusE: AudioTrack::copyData name:%s srcTotalOutChans:%d zeroing buffers\n", name().toLocal8Bit().constData(), srcTotalOutChans);
@@ -1134,7 +1146,18 @@ void AudioTrack::copyData(unsigned pos,
     //---------------------------------------------------
 
     // Allow it to process even if muted so that when mute is turned off, left-over buffers (reverb tails etc) can die away.
-    _efxPipe->apply(pos, trackChans, nframes, true, buffer);
+    if(isFrozenPlay)
+    {
+      // Nothing to process. The frozen signal already includes the effects. Tell the rack the track is inactive.
+      _efxPipe->apply(pos, trackChans, nframes, false, nullptr);
+    }
+    else
+    {
+      _efxPipe->apply(pos, trackChans, nframes, true, buffer);
+      // Are we rendering this track to a frozen file?
+      if(_freezeCapturing.load(std::memory_order_acquire))
+        freezeCapture(pos, trackChans, nframes, buffer);
+    }
 
     //---------------------------------------------------
     // apply volume, pan
@@ -1891,7 +1914,8 @@ void AudioTrack::setPrefader(bool val)
 
 bool WaveTrack::canEnableRecord() const
       {
-      return  (!noInRoute() || (this == MusEGlobal::song->bounceTrack));
+      // A frozen track plays its frozen file, it can not record.
+      return  !frozen() && (!noInRoute() || (this == MusEGlobal::song->bounceTrack));
       }
 
 

@@ -29,6 +29,7 @@
 //#include <limits.h>
 
 #include "audioprefetch.h"
+#include "synth.h"
 #include "globals.h"
 #include "track.h"
 #include "song.h"
@@ -216,12 +217,26 @@ void AudioPrefetch::prefetch(bool doSeek)
         rpos_frame = MusEGlobal::song->rPos().frame();
       }
 
+      // Frozen synth tracks play their frozen file. (Frozen wave tracks are handled below.)
+      SynthIList* sl = MusEGlobal::song->syntis();
+      for (iSynthI is = sl->begin(); is != sl->end(); ++is) {
+            SynthI* si = *is;
+            if(si->frozen() && !si->off())
+              si->frozenPrefetch(do_loops, lpos_frame, rpos_frame);
+            }
+
       WaveTrackList* tl = MusEGlobal::song->waves();
       for (iWaveTrack it = tl->begin(); it != tl->end(); ++it) {
             WaveTrack* track = *it;
             // Save time. Don't bother if track is off. Track On/Off not designed for rapid repeated response (but mute is). (p3.3.29)
             if(track->off())
               continue;
+            // A frozen track plays its frozen file, not its parts.
+            if(track->frozen())
+            {
+              track->frozenPrefetch(do_loops, lpos_frame, rpos_frame);
+              continue;
+            }
 
             Fifo* fifo = track->prefetchFifo();
             const int empty_count = fifo->getEmptyCount();
@@ -316,9 +331,21 @@ void AudioPrefetch::seek(unsigned seekTo)
         return;
       }
 
+      SynthIList* sl = MusEGlobal::song->syntis();
+      for (iSynthI is = sl->begin(); is != sl->end(); ++is) {
+            SynthI* si = *is;
+            if(si->frozen())
+              si->frozenSeek(seekTo);
+            }
+
       WaveTrackList* tl = MusEGlobal::song->waves();
       for (iWaveTrack it = tl->begin(); it != tl->end(); ++it) {
             WaveTrack* track = *it;
+            if(track->frozen())
+            {
+              track->frozenSeek(seekTo);
+              continue;
+            }
             track->clearPrefetchFifo();
             track->setPrefetchWritePos(seekTo);
             track->seekData(seekTo);

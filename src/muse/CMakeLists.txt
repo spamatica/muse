@@ -104,6 +104,7 @@ file (GLOB core_source_files
       audioparallel.cpp
       audioprefetch.cpp
       audiotrack.cpp
+      freeze.cpp
       cobject.cpp
       conf.cpp
       controlfifo.cpp

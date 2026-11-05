@@ -559,6 +559,25 @@ void SynthI::close()
 //   processMidi
 //---------------------------------------------------------
 
+//---------------------------------------------------------
+//   discardEvents
+//    Same as what the synth interfaces do when not active.
+//---------------------------------------------------------
+
+void SynthI::discardEvents()
+{
+  MidiPlayEvent buf_ev;
+  const unsigned int usr_buf_sz = eventBuffers(MidiDevice::UserBuffer)->getSize();
+  for(unsigned int i = 0; i < usr_buf_sz; ++i)
+  {
+    if(eventBuffers(MidiDevice::UserBuffer)->get(buf_ev))
+      _outUserEvents.addExclusive(buf_ev);
+  }
+  eventBuffers(MidiDevice::PlaybackBuffer)->clearRead();
+  _outPlaybackEvents.clear();
+  setStopFlag(false);
+}
+
 void SynthI::processMidi(unsigned int /*curFrame*/)
 {
 }

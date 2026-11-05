@@ -125,6 +125,9 @@ Song::Song(const char* name)
       _globalPitchShift = 0;
       bounceTrack = nullptr;
       bounceOutput = nullptr;
+      freezeTrack = nullptr;
+      freezeFrames = 0;
+      freezeCancelled = false;
       showSongInfo=true;
       clearDrumMap(); // One-time only early init
       clear(false);
@@ -6500,6 +6503,7 @@ void Song::abortRolling()
   if (record())
         MusEGlobal::audio->recordStop();
   setStopPlay(false);
+  freezeTrackFinish();
 }
 
 //---------------------------------------------------------
@@ -6519,6 +6523,7 @@ void Song::stopRolling(Undo* operations)
       if (record())
             MusEGlobal::audio->recordStop(false, opsp);
       setStopPlay(false);
+      freezeTrackFinish();
       
       processAutomationEvents(opsp);
       

@@ -693,6 +693,20 @@ class AudioTrack : public Track {
       float _previousLatency;
 
       Fifo fifo;                    // fifo -> _recFile
+
+      // Freeze track support. See freeze.cpp.
+      // The track's post-effects (pre-fader) signal is rendered to a wave file, which then replaces
+      //  the track's own processing (parts, synth, effects rack) during playback to save CPU.
+      std::atomic<bool> _frozen;         // Persistent state: the track plays _frozenSf instead of processing.
+      QString _frozenFileName;           // Name of the frozen file. Persistent.
+      SndFileR _frozenSf;                // Frozen file opened for playback.
+      Fifo _frozenFifo;                  // Playback fifo: prefetch thread -> audio thread.
+      unsigned _frozenWritePos;          // Prefetch thread only. Next frame to be read from the file.
+      int64_t _frozenDirectPos;          // Audio thread only. Next frame in the file for direct (freewheel) reads.
+      std::atomic<bool> _freezeCapturing; // A freeze render is in progress.
+      SndFileR _freezeSf;                // File being rendered to.
+      Fifo _freezeFifo;                  // Render fifo: audio thread -> prefetch thread (not in freewheel).
+      int64_t _freezeFilePos;            // Next frame to be written in _freezeSf.
       // Set by the thread that starts processing the track in a cycle (the claim), see AudioTrack::copyData.
       std::atomic<bool> _processed;
       // Set when that thread has finished, so others (parallel processing) know the output buffers are complete.
@@ -798,6 +812,36 @@ class AudioTrack : public Track {
       bool putFifo(int channels, unsigned long n, float** bp);
       // Transfers the recording fifo to _recFile.
       void record();
+
+   protected:
+      // Audio thread: Called from copyData after the effects rack. Captures the signal when freezing.
+      void freezeCapture(unsigned pos, int chans, unsigned nframes, float** bp);
+      // Audio thread: Fills bp from the frozen file. Returns whether data was available.
+      bool frozenFetch(unsigned pos, int chans, unsigned nframes, float** bp);
+
+   public:
+      bool frozen() const { return _frozen.load(std::memory_order_acquire); }
+      bool freezeCapturing() const { return _freezeCapturing.load(std::memory_order_acquire); }
+      const QString& frozenFileName() const { return _frozenFileName; }
+      // Whether this kind of track can be frozen (wave and synth tracks).
+      bool canFreeze() const;
+      // GUI thread: Start rendering. Creates the file. Returns true on error.
+      bool freezeBegin(QString* errorMsg = nullptr);
+      // GUI thread: Finish rendering. If at least requiredFrames were rendered the track becomes frozen,
+      //  else the file is removed.
+      // Returns true on error.
+      bool freezeEnd(int64_t requiredFrames);
+      // GUI thread: Open an existing file and make the track frozen. Returns true on error.
+      bool freezeSetFile(const QString& fileName);
+      // GUI thread: Make the track play its normal processing again. The file is kept.
+      void unfreeze();
+      // Prefetch thread: Position the frozen file reader, fill the playback fifo.
+      void frozenSeek(unsigned pos);
+      void frozenPrefetch(bool doLoops, unsigned lposFrame, unsigned rposFrame);
+      // Prefetch thread: Transfer the render fifo to the file.
+      void freezeWriteTick();
+      // Number of buffers waiting to be written by freezeWriteTick.
+      int freezeFifoCount() { return _freezeFifo.getCount(); }
       // Returns the recording fifo current count.
       int recordFifoCount() { return fifo.getCount(); }
 
