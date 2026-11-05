@@ -62,4 +62,5 @@ Understand this before touching song/track/part/event data. (Full explanation: [
 
 - Style is loose; match the surrounding file (mixed indentation and brace styles exist, much code is from 2000s-era Werner Schweer). Files carry the GPL header (GPL v2+).
 - Prefer Qt facilities over adding support libraries (see README.developer).
+- Test cases: when you write any test case (unit test, test program, test data), put it in the `tests/` directory (`src/tests/`), not next to the code it tests. Existing tests elsewhere (`vst3/`) stay where they are.
 - User-facing strings use `tr()`; `find_translation_concatenation.sh` and `find_manual_plural.sh` check for i18n problems. `UPDATE_TRANSLATIONS=ON` rewrites `share/locale/*.ts` in the source tree, so leave it OFF unless intended.
