@@ -56,6 +56,8 @@ RtAudioDevice::RtAudioDevice(bool forceDefault) : AudioDevice()
       AL::sampleRate = MusEGlobal::sampleRate;
       MusEGlobal::segmentSize = MusEGlobal::config.deviceAudioBufSize;
 
+      _freewheelRequest = false;
+      _freewheelThreadRunning = false;
       _start_timeUS = systemTimeUS();
       _criticalVariablesIdx = 0;
       for(unsigned x = 0; x < 2; ++x)
@@ -132,6 +134,15 @@ bool initRtAudio(bool forceDefault = false)
 int processAudio( void * outputBuffer, void *inputBuffer, unsigned int nBufferFrames,
          double /*streamTime*/, RtAudioStreamStatus /* status */, void * /* userData */ )
 {
+  // If the freewheel thread is processing, just give silence.
+  std::unique_lock<std::mutex> processLock(rtAudioDevice->_processMutex, std::try_to_lock);
+  if(!processLock.owns_lock())
+  {
+    if(outputBuffer)
+      memset(outputBuffer, 0, nBufferFrames * 2 * sizeof(float));
+    return 0;
+  }
+
   rtAudioDevice->setCriticalVariables(nBufferFrames);
   
   if(MusEGlobal::audio->isRunning()) {
@@ -188,6 +199,68 @@ int processAudio( void * outputBuffer, void *inputBuffer, unsigned int nBufferFr
   }
   
   return 0;
+}
+
+//---------------------------------------------------------
+//   freewheelLoop
+//   Runs the cycles as fast as possible, until freewheel is turned off.
+//---------------------------------------------------------
+void* RtAudioDevice::freewheelLoop(void* arg)
+{
+  RtAudioDevice* dev = static_cast<RtAudioDevice*>(arg);
+  // Wait for a cycle of the sound card callback that is in progress. From now on it gives silence.
+  std::lock_guard<std::mutex> lock(dev->_processMutex);
+
+  if(MusEGlobal::audio->isRunning())
+    MusEGlobal::audio->setFreewheel(true);
+
+  while(dev->_freewheelRequest.load())
+  {
+    dev->setCriticalVariables(MusEGlobal::segmentSize);
+    // Nothing is read from the sound card, the inputs are silent.
+    for(int i = 0; i < dev->inputPortsList.size(); ++i)
+      memset(dev->inputPortsList.at(i)->buffer, 0, MusEGlobal::segmentSize * sizeof(float));
+    if(MusEGlobal::audio->isRunning())
+      dev->processTransport(MusEGlobal::segmentSize);
+    else
+      // Nothing to process. Do not spin.
+      usleep(MusEGlobal::segmentSize * 1000000UL / MusEGlobal::sampleRate);
+  }
+
+  if(MusEGlobal::audio->isRunning())
+    MusEGlobal::audio->setFreewheel(false);
+  return nullptr;
+}
+
+void RtAudioDevice::setFreewheel(bool f)
+{
+  if(f)
+  {
+    if(_freewheelRequest.load())
+      return; // Already.
+    // A previous thread that has been asked to end may still be on its way out.
+    stopFreewheelThread();
+    _freewheelRequest = true;
+    if(pthread_create(&_freewheelThread, nullptr, freewheelLoop, this) == 0)
+      _freewheelThreadRunning = true;
+    else
+    {
+      fprintf(stderr, "Error: RtAudioDevice: cannot start the freewheel thread\n");
+      _freewheelRequest = false;
+    }
+  }
+  else
+    // The thread ends by itself. It is joined when the next one starts, or when we stop.
+    _freewheelRequest = false;
+}
+
+void RtAudioDevice::stopFreewheelThread()
+{
+  _freewheelRequest = false;
+  if(!_freewheelThreadRunning)
+    return;
+  pthread_join(_freewheelThread, nullptr);
+  _freewheelThreadRunning = false;
 }
 
 //---------------------------------------------------------
@@ -362,6 +435,7 @@ bool RtAudioDevice::start(int priority)
 
 void RtAudioDevice::stop ()
 {
+  stopFreewheelThread();
 // At this time, all versions >= 6 have RTAUDIO_VERSION_MAJOR defined.
 #ifdef RTAUDIO_VERSION_MAJOR
   if (dac->isStreamRunning())

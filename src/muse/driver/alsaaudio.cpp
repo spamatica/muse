@@ -142,6 +142,8 @@ AlsaAudioDevice::AlsaAudioDevice() : AudioDevice()
   _periodCount = 3;
   _threadCreated = false;
   _quit = false;
+  _freewheelRequest = false;
+  _freewheeling = false;
   _realTimePriority = 0;
   _start_timeUS = systemTimeUS();
   _criticalVariablesIdx = 0;
@@ -555,6 +557,36 @@ void AlsaAudioDevice::runLoop()
 {
   while(!_quit)
   {
+    // Freewheel: no waiting for the device, which is stopped meanwhile and started again at the end.
+    // Like with JACK, nothing is read from or written to the sound card and the inputs are silent.
+    const bool fw = _freewheelRequest.load();
+    if(fw != _freewheeling)
+    {
+      _freewheeling = fw;
+      if(fw)
+      {
+        snd_pcm_drop(_playback);
+        if(_capture)
+          snd_pcm_drop(_capture);
+      }
+      else
+        startStreams();
+      if(MusEGlobal::audio->isRunning())
+        MusEGlobal::audio->setFreewheel(fw);
+    }
+    if(_freewheeling)
+    {
+      setCriticalVariables(_periodSize);
+      for(int i = 0; i < inputPortsList.size(); ++i)
+        memset(inputPortsList.at(i)->buffer, 0, _periodSize * sizeof(float));
+      if(MusEGlobal::audio->isRunning())
+        processTransport(_periodSize);
+      else
+        // Nothing to process. Do not spin.
+        usleep(_periodSize * 1000000UL / MusEGlobal::sampleRate);
+      continue;
+    }
+
     _xrunThisCycle = false;
 
     // Blocks until a period of capture data is available, which paces the cycle.
@@ -665,6 +697,8 @@ bool AlsaAudioDevice::start(int priority)
 
   _realTimePriority = priority;
   _quit = false;
+  _freewheelRequest = false;
+  _freewheeling = false;
   _firstCycle = true;
 
   if(!startStreams())

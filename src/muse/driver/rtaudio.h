@@ -22,6 +22,10 @@
 #include "large_int.h"
 #include <rtaudio/RtAudio.h>
 
+#include <atomic>
+#include <mutex>
+#include <pthread.h>
+
 
 // For debugging output: Uncomment the fprintf section.
 #define DEBUG_RTAUDIO(dev, format, args...) // fprintf(dev, format, ##args);
@@ -48,7 +52,17 @@ class RtAudioDevice : public AudioDevice {
       unsigned _frameCounter[2];
       unsigned _criticalVariablesIdx;
 
+      // Freewheel: the sound card calls us at its own pace, so for processing as fast as possible a thread of
+      //  our own runs the cycles, and the sound card callback only gives silence. Only one of them processes at
+      //  a time, whoever holds _processMutex.
+      std::atomic<bool> _freewheelRequest;
+      pthread_t _freewheelThread;
+      bool _freewheelThreadRunning;
+      static void* freewheelLoop(void*);
+
    public:
+      // Held by whoever runs the cycles. The sound card callback gives up if the freewheel thread has it.
+      std::mutex _processMutex;
       // Time in microseconds at which the driver was created.
       uint64_t _start_timeUS;
 
@@ -117,6 +131,7 @@ class RtAudioDevice : public AudioDevice {
       RtAudioDevice(bool forceDefault);
       virtual ~RtAudioDevice()
       {
+        stopFreewheelThread();
 
         while (outputPortsList.size() > 0) {
           MuseRtAudioPort *port = outputPortsList.takeFirst();
@@ -316,7 +331,9 @@ class RtAudioDevice : public AudioDevice {
       virtual bool isRealtime() { return MusEGlobal::realTimeScheduling; }
       virtual int realtimePriority() const { return 40; }
 
-      virtual void setFreewheel(bool) {}
+      virtual void setFreewheel(bool f);
+      // Ends the freewheel thread, if there is one.
+      void stopFreewheelThread();
       virtual int setMaster(bool, bool /*unconditional*/ = false) { return 1; }
 };
 

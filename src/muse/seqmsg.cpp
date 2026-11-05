@@ -778,8 +778,9 @@ void Audio::msgBounce(const Pos* startPos)
       if(MusEGlobal::config.freewheelMode)
       {
         MusEGlobal::audioDevice->setFreewheel(true);
-        // Wait a few cycles for the freewheel to take effect.
-        for(int i = 0; i < 4; ++i)
+        // Wait a few cycles for the freewheel to take effect. Some drivers take a while, for example
+        //  PipeWire has to move the graph to its freewheel driver first.
+        for(int i = 0; i < 100; ++i)
         {
           if(freewheel())
             break;

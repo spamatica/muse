@@ -24,6 +24,7 @@
 #define __ALSAAUDIO_H__
 
 #include <alsa/asoundlib.h>
+#include <atomic>
 #include <pthread.h>
 #include <string.h>
 
@@ -72,6 +73,9 @@ class AlsaAudioDevice : public AudioDevice {
       pthread_t _thread;
       bool _threadCreated;
       volatile bool _quit;
+      // Freewheel: process as fast as possible without the device. Requested from any thread, taken up by the loop.
+      std::atomic<bool> _freewheelRequest;
+      bool _freewheeling;
       int _realTimePriority;
 
       // Critical variables that need to all update at once.
@@ -202,7 +206,7 @@ class AlsaAudioDevice : public AudioDevice {
       virtual bool isRealtime() { return MusEGlobal::realTimeScheduling; }
       virtual int realtimePriority() const { return 40; }
 
-      virtual void setFreewheel(bool) {}
+      virtual void setFreewheel(bool f) { _freewheelRequest.store(f); }
       virtual int setMaster(bool, bool /*unconditional*/ = false) { return 1; }
 };
 

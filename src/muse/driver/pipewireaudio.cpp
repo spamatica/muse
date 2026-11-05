@@ -24,6 +24,7 @@
 #include <pthread.h>
 #include <sched.h>
 #include <string.h>
+#include <unistd.h>
 #include <stdint.h>
 
 #include <spa/utils/result.h>
@@ -109,6 +110,8 @@ PipeWireAudioDevice::PipeWireAudioDevice() : AudioDevice()
   _nodeId = SPA_ID_INVALID;
   _active = false;
   _rateMismatchWarned = false;
+  _freewheelRequest = false;
+  _freewheelThreadRunning = false;
   _adapterQuantum = 0;
   _adapterPendingIn = 0;
   _start_timeUS = systemTimeUS();
@@ -124,6 +127,7 @@ PipeWireAudioDevice::PipeWireAudioDevice() : AudioDevice()
 
 PipeWireAudioDevice::~PipeWireAudioDevice()
 {
+  stopFreewheelThread();
   cleanup();
 }
 
@@ -288,6 +292,13 @@ void PipeWireAudioDevice::process(struct spa_io_position* position)
   if(!lock.owns_lock())
     return;
 
+  // The freewheel thread is running the cycles.
+  if(_freewheelRequest.load())
+  {
+    silenceOutputs(n);
+    return;
+  }
+
   if(!_active.load())
   {
     silenceOutputs(n);
@@ -311,6 +322,75 @@ void PipeWireAudioDevice::process(struct spa_io_position* position)
   }
   else
     processAdapted(n);
+}
+
+//---------------------------------------------------------
+//   freewheelLoop
+//   Runs the cycles as fast as possible, until freewheel is turned off. Each cycle takes _portMutex like the
+//   process callback does, which gives silence meanwhile.
+//---------------------------------------------------------
+
+void* PipeWireAudioDevice::freewheelLoop(void* arg)
+{
+  PipeWireAudioDevice* dev = static_cast<PipeWireAudioDevice*>(arg);
+
+  if(MusEGlobal::audio->isRunning())
+    MusEGlobal::audio->setFreewheel(true);
+
+  while(dev->_freewheelRequest.load())
+  {
+    if(!dev->_active.load() || !MusEGlobal::audio->isRunning())
+    {
+      // Nothing to process. Do not spin.
+      usleep(MusEGlobal::segmentSize * 1000000UL / MusEGlobal::sampleRate);
+      continue;
+    }
+    std::lock_guard<std::recursive_mutex> lock(dev->_portMutex);
+    // Nothing is read from the graph, the inputs are silent.
+    for(std::list<PwPortHandle*>::iterator i = dev->_inPorts.begin(); i != dev->_inPorts.end(); ++i)
+      memset((*i)->buffer, 0, MusEGlobal::segmentSize * sizeof(float));
+    dev->runCycle();
+  }
+
+  {
+    // The graph cycles were not seen meanwhile. Start the adapter over.
+    std::lock_guard<std::recursive_mutex> lock(dev->_portMutex);
+    dev->_adapterQuantum = 0;
+  }
+  if(MusEGlobal::audio->isRunning())
+    MusEGlobal::audio->setFreewheel(false);
+  return nullptr;
+}
+
+void PipeWireAudioDevice::setFreewheel(bool f)
+{
+  if(f)
+  {
+    if(_freewheelRequest.load())
+      return; // Already.
+    // A previous thread that has been asked to end may still be on its way out.
+    stopFreewheelThread();
+    _freewheelRequest = true;
+    if(pthread_create(&_freewheelThread, nullptr, freewheelLoop, this) == 0)
+      _freewheelThreadRunning = true;
+    else
+    {
+      fprintf(stderr, "Error: PipeWireAudioDevice: cannot start the freewheel thread\n");
+      _freewheelRequest = false;
+    }
+  }
+  else
+    // The thread ends by itself. It is joined when the next one starts, or when we stop.
+    _freewheelRequest = false;
+}
+
+void PipeWireAudioDevice::stopFreewheelThread()
+{
+  _freewheelRequest = false;
+  if(!_freewheelThreadRunning)
+    return;
+  pthread_join(_freewheelThread, nullptr);
+  _freewheelThreadRunning = false;
 }
 
 //---------------------------------------------------------
@@ -515,6 +595,7 @@ bool PipeWireAudioDevice::start(int /*priority*/)
 
 void PipeWireAudioDevice::stop()
 {
+  stopFreewheelThread();
   // Taking the lock waits for any cycle that is running.
   std::lock_guard<std::recursive_mutex> lock(_portMutex);
   _active = false;

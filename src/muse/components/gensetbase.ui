@@ -953,7 +953,7 @@
           <item row="2" column="0">
            <widget class="QLabel" name="freewheelLabel">
             <property name="text">
-             <string>Try to use Jack Freewheel</string>
+             <string>Try to use freewheel (JACK, PipeWire, ALSA, RtAudio)</string>
             </property>
             <property name="wordWrap">
              <bool>false</bool>
