@@ -78,6 +78,9 @@ bool TrackNameFactory::genUniqueNames(Track::TrackType type, QString base, int c
       case Track::AUDIO_SOFTSYNTH:
             base = QString("Synth");
             break;
+      case Track::FOLDER:
+            base = QString("Folder");
+            break;
     };
     base += " ";
   }        

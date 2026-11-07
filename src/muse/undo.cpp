@@ -109,7 +109,7 @@ bool Song::audioCtrlMoveEnd(PendingOperationList& operations)
   bool ret = false;
   for(ciTrack it = tracks()->cbegin(); it != tracks()->cend(); ++it)
   {
-    if((*it)->isMidiTrack())
+    if(!(*it)->isAudioTrack())
       continue;
     AudioTrack* at = static_cast<AudioTrack*>(*it);
     CtrlListList* ecll = at->erasedController();
@@ -200,7 +200,7 @@ bool Song::undoAudioCtrlMoveEnd(PendingOperationList& operations)
             continue;
 
           Track* tr = const_cast<Track*>(undoOpF.track);
-          if(tr->isMidiTrack())
+          if(!tr->isAudioTrack())
             continue;
 
           UndoAudioCtrlTrackMapInsertResult tm_ires = tm.insert(UndoAudioCtrlTrackMapInsertPair(tr, UndoAudioCtrlTrackMapItem()));
@@ -284,7 +284,7 @@ bool Song::undoAudioCtrlMoveEnd(PendingOperationList& operations)
 
       for(ciUndoAudioCtrlTrackMap itm = tm.cbegin(); itm != tm.cend(); ++itm)
       {
-        if(itm->first->isMidiTrack())
+        if(!itm->first->isAudioTrack())
           continue;
         AudioTrack* atrack = static_cast<AudioTrack*>(itm->first);
         const UndoAudioCtrlTrackMapItem& tmi = itm->second;
@@ -352,7 +352,7 @@ const char* UndoOp::typeName()
             "AddTempo", "DeleteTempo", "ModifyTempo", "SetTempo", "SetStaticTempo", "SetGlobalTempo", "EnableMasterTrack",
             "AddSig",   "DeleteSig",   "ModifySig",
             "AddKey",   "DeleteKey",   "ModifyKey",
-            "ModifyTrackName", "ModifyTrackChannel",
+            "ModifyTrackName", "ModifyTrackChannel", "ModifyTrackFolder", "ReorderTracks",
             "SetTrackRecord", "SetTrackMute", "SetTrackSolo", "SetTrackRecMonitor", "SetTrackOff",
             "MoveTrack",
             "ModifyClip", "AddMarker", "DeleteMarker", "ModifyMarker", "SetMarkerPos",
@@ -390,6 +390,13 @@ void UndoOp::dump()
                   break;
             case ModifyTrackName:
                   printf("<%s>-<%s>\n", _oldName->toLocal8Bit().data(), _newName->toLocal8Bit().data());
+                  break;
+            case ReorderTracks:
+                  printf("%d tracks\n", _trackOrder ? int(_trackOrder->size()) : 0);
+                  break;
+            case ModifyTrackFolder:
+                  printf("<%s>-<%s>\n", _oldFolder ? _oldFolder->name().toLocal8Bit().data() : "",
+                                         _newFolder ? _newFolder->name().toLocal8Bit().data() : "");
                   break;
             case ModifyPartName:
                   printf("<%s>-<%s>\n", _oldName->toLocal8Bit().data(), _newName->toLocal8Bit().data());
@@ -538,6 +545,14 @@ void deleteUndoOp(UndoOp& op, bool doUndos = true, bool doRedos = true)
           {
             delete op._plugMoveDstMidiAudioCtrlMap;
             op._plugMoveDstMidiAudioCtrlMap = nullptr;
+          }
+          break;
+
+    case UndoOp::ReorderTracks:
+          if (op._trackOrder)
+          {
+            delete op._trackOrder;
+            op._trackOrder = nullptr;
           }
           break;
 
@@ -784,6 +799,12 @@ void Undo::insert(Undo::iterator position, const UndoOp& op)
     case UndoOp::MoveTrack:
       fprintf(stderr, "Undo::insert: MoveTrack\n");
     break;
+    case UndoOp::ModifyTrackFolder:
+      fprintf(stderr, "Undo::insert: ModifyTrackFolder\n");
+      break;
+    case UndoOp::ReorderTracks:
+      fprintf(stderr, "Undo::insert: ReorderTracks\n");
+      break;
     case UndoOp::ModifyTrackName:
       fprintf(stderr, "Undo::insert: ModifyTrackName\n");
     break;
@@ -2246,6 +2267,28 @@ bool Song::applyOperationGroup(Undo& group, OperationType type, void* sender)
   bool ret = false;
   if (!group.empty())
   {
+    // Only empty folders can be deleted.
+    bool removed_folders = false;
+    for(iUndoOp iu = group.begin(); iu != group.end(); )
+    {
+      if(iu->type == UndoOp::DeleteTrack && iu->track && iu->track->isFolderTrack() &&
+         folderHasTracks(static_cast<const FolderTrack*>(iu->track)))
+      {
+        iu = group.erase(iu);
+        removed_folders = true;
+      }
+      else
+        ++iu;
+    }
+    if(removed_folders)
+    {
+      QMessageBox::information(MusEGlobal::muse, tr("Folder"),
+        tr("Only an empty folder can be deleted.\nMove its tracks out of the folder first."));
+      update(SC_TRACK_MODIFIED | SC_TRACK_SELECTION);
+      if(group.empty())
+        return false;
+    }
+
     // Remove any operations that would edit a frozen track.
     bool removed_parts = false;
     bool removed_automation = false;
@@ -2407,7 +2450,7 @@ void Song::revertOperationGroup2(Undo& /*operations*/)
           int n = _auxs.size();
           for(iTrack i = _tracks.begin(); i != _tracks.end(); ++i) 
           {
-            if((*i)->isMidiTrack())
+            if(!(*i)->isAudioTrack())
               continue;
             MusECore::AudioTrack* at = static_cast<AudioTrack*>(*i);
             if(at->hasAuxSend()) 
@@ -2450,7 +2493,7 @@ void Song::executeOperationGroup2(Undo& /*operations*/)
           int n = _auxs.size();
           for(iTrack i = _tracks.begin(); i != _tracks.end(); ++i) 
           {
-            if((*i)->isMidiTrack())
+            if(!(*i)->isAudioTrack())
               continue;
             MusECore::AudioTrack* at = static_cast<AudioTrack*>(*i);
             if(at->hasAuxSend()) 
@@ -2844,6 +2887,29 @@ UndoOp::UndoOp(UndoOp::UndoType type_, int old_frames, int new_frames, const Par
     _noUndo = noUndo;
     _oldPropValue = old_frames;
     _newPropValue = new_frames;
+}
+
+UndoOp::UndoOp(UndoType type_, std::vector<Track*>* new_order, bool noUndo)
+{
+  assert(type_==ReorderTracks);
+  assert(new_order);
+
+  type = type_;
+  track = nullptr;
+  _noUndo = noUndo;
+  _trackOrder = new_order;
+}
+
+UndoOp::UndoOp(UndoType type_, const Track* track_, FolderTrack* old_folder, FolderTrack* new_folder, bool noUndo)
+{
+  assert(type_==ModifyTrackFolder);
+  assert(track_);
+
+  type = type_;
+  track = track_;
+  _noUndo = noUndo;
+  _oldFolder = old_folder;
+  _newFolder = new_folder;
 }
 
 UndoOp::UndoOp(UndoOp::UndoType type_, const Track* track_, const QString& old_name, const QString& new_name, bool noUndo)
@@ -3347,6 +3413,17 @@ void Song::revertOperationGroup1(Undo& operations)
                         updateFlags |= SC_ROUTE;
                         break;
                         
+                  case UndoOp::ReorderTracks:
+                        PluginGuiTitlesAboutToChange(0, -1);
+                        pendingOperations.add(PendingOperationItem(&_tracks, i->_trackOrder, PendingOperationItem::SetTrackOrder));
+                        updateFlags |= SC_TRACK_MOVED;
+                        break;
+
+                  case UndoOp::ModifyTrackFolder:
+                        pendingOperations.add(PendingOperationItem(editable_track, i->_oldFolder, PendingOperationItem::ModifyTrackFolder));
+                        updateFlags |= (SC_TRACK_MODIFIED | SC_TRACK_RESIZED | SC_TRACK_SELECTION);
+                        break;
+
                   case UndoOp::ModifyTrackName:
                         // --------------------------------------------------------------------------------
                         // Special: Some plugin UIs do not allow changing the title bar text after creation.
@@ -3588,7 +3665,7 @@ void Song::revertOperationGroup1(Undo& operations)
 #ifdef _UNDO_DEBUG_
                         fprintf(stderr, "Song::revertOperationGroup1:ModifyAudioCtrlValList\n");
 #endif                        
-                        if(!i->track->isMidiTrack())
+                        if(i->track->isAudioTrack())
                         {
                           AudioTrack* at = static_cast<AudioTrack*>(const_cast<Track*>(i->track));
                           const int id = i->_audioCtrlIdModify;
@@ -3826,7 +3903,7 @@ void Song::revertOperationGroup1(Undo& operations)
                           //        would unselect thousands of points in ONE loop instead of thousands of items
                           //        in an operations list.
                           for (MusECore::ciTrack it = tracks()->cbegin(); it != tracks()->cend(); ++it) {
-                            if((*it)->isMidiTrack())
+                            if(!(*it)->isAudioTrack())
                               continue;
                             // Include all tracks.
                             MusECore::AudioTrack* track = static_cast<MusECore::AudioTrack*>(*it);
@@ -4290,6 +4367,16 @@ void Song::revertOperationGroup3(Undo& operations)
                         }
                         break;
 
+                  case UndoOp::ReorderTracks:
+                        showPendingPluginGuis(0, -1);
+                        updateUiWindowTitles(0, -1);
+                        break;
+
+                  case UndoOp::ModifyTrackFolder:
+                        // The track may now be hidden by a folded folder.
+                        unselectHiddenTracks();
+                        break;
+
                   case UndoOp::ModifyTrackName:
                   {
                         showPendingPluginGuis(editable_track);
@@ -4333,7 +4420,7 @@ void Song::revertOperationGroup3(Undo& operations)
                   //        each one of these...
                   case UndoOp::AddAudioCtrlVal:
                   case UndoOp::DeleteAudioCtrlVal:
-                    if(editable_track && !editable_track->isMidiTrack())
+                    if(editable_track && editable_track->isAudioTrack())
                     {
                       AudioTrack* audio_track = static_cast<AudioTrack*>(editable_track);
                       const AutomationType automation_type = audio_track->automationType();
@@ -4342,7 +4429,7 @@ void Song::revertOperationGroup3(Undo& operations)
                     }
                   break;
                   case UndoOp::AddAudioCtrlValStruct:
-                    if(editable_track && !editable_track->isMidiTrack())
+                    if(editable_track && editable_track->isAudioTrack())
                     {
                       AudioTrack* audio_track = static_cast<AudioTrack*>(editable_track);
                       const AutomationType automation_type = audio_track->automationType();
@@ -4351,7 +4438,7 @@ void Song::revertOperationGroup3(Undo& operations)
                     }
                   break;
                   case UndoOp::ModifyAudioCtrlVal:
-                    if(editable_track && !editable_track->isMidiTrack())
+                    if(editable_track && editable_track->isAudioTrack())
                     {
                       AudioTrack* audio_track = static_cast<AudioTrack*>(editable_track);
                       const AutomationType automation_type = audio_track->automationType();
@@ -4360,7 +4447,7 @@ void Song::revertOperationGroup3(Undo& operations)
                     }
                   break;
                   case UndoOp::ModifyAudioCtrlValList:
-                    if(editable_track && !editable_track->isMidiTrack())
+                    if(editable_track && editable_track->isAudioTrack())
                     {
                       AudioTrack* audio_track = static_cast<AudioTrack*>(editable_track);
                       const AutomationType automation_type = audio_track->automationType();
@@ -4370,7 +4457,7 @@ void Song::revertOperationGroup3(Undo& operations)
                   break;
 
                   case UndoOp::ChangeRackEffectPlugin:
-                    if(editable_track && !editable_track->isMidiTrack())
+                    if(editable_track && editable_track->isAudioTrack())
                     {
                       AudioTrack* at = static_cast<AudioTrack*>(editable_track);
                       // Note that for DSSI (at least), the track at this point must already
@@ -4716,6 +4803,17 @@ void Song::executeOperationGroup1(Undo& operations)
                         updateFlags |= SC_ROUTE;
                         break;
                         
+                  case UndoOp::ReorderTracks:
+                        PluginGuiTitlesAboutToChange(0, -1);
+                        pendingOperations.add(PendingOperationItem(&_tracks, i->_trackOrder, PendingOperationItem::SetTrackOrder));
+                        updateFlags |= SC_TRACK_MOVED;
+                        break;
+
+                  case UndoOp::ModifyTrackFolder:
+                        pendingOperations.add(PendingOperationItem(editable_track, i->_newFolder, PendingOperationItem::ModifyTrackFolder));
+                        updateFlags |= (SC_TRACK_MODIFIED | SC_TRACK_RESIZED | SC_TRACK_SELECTION);
+                        break;
+
                   case UndoOp::ModifyTrackName:
                         // --------------------------------------------------------------------------------
                         // Special: Some plugin UIs do not allow changing the title bar text after creation.
@@ -5043,7 +5141,7 @@ void Song::executeOperationGroup1(Undo& operations)
                           updateFlags |= SC_AUDIO_CTRL_MOVE_MODE;
                         }
 
-                        if(!i->track->isMidiTrack())
+                        if(i->track->isAudioTrack())
                         {
                           AudioTrack* at = static_cast<AudioTrack*>(const_cast<Track*>(i->track));
                           const int id = i->_audioCtrlIdModify;
@@ -5786,6 +5884,14 @@ void Song::executeOperationGroup3(Undo& operations)
                         // TODO Coordinate close/open with part mute and/or track off.
                         editable_track->closeAllParts();
                         break;
+                  case UndoOp::ReorderTracks:
+                        showPendingPluginGuis(0, -1);
+                        updateUiWindowTitles(0, -1);
+                        break;
+                  case UndoOp::ModifyTrackFolder:
+                        // The track may now be hidden by a folded folder.
+                        unselectHiddenTracks();
+                        break;
                   case UndoOp::ModifyTrackName:
                         showPendingPluginGuis(editable_track);
                         updateUiWindowTitles(editable_track);
@@ -5826,7 +5932,7 @@ void Song::executeOperationGroup3(Undo& operations)
                   //        each one of these...
                   case UndoOp::AddAudioCtrlVal:
                   case UndoOp::DeleteAudioCtrlVal:
-                    if(editable_track && !editable_track->isMidiTrack())
+                    if(editable_track && editable_track->isAudioTrack())
                     {
                       AudioTrack* audio_track = static_cast<AudioTrack*>(editable_track);
                       const AutomationType automation_type = audio_track->automationType();
@@ -5835,7 +5941,7 @@ void Song::executeOperationGroup3(Undo& operations)
                     }
                   break;
                   case UndoOp::AddAudioCtrlValStruct:
-                    if(editable_track && !editable_track->isMidiTrack())
+                    if(editable_track && editable_track->isAudioTrack())
                     {
                       AudioTrack* audio_track = static_cast<AudioTrack*>(editable_track);
                       const AutomationType automation_type = audio_track->automationType();
@@ -5844,7 +5950,7 @@ void Song::executeOperationGroup3(Undo& operations)
                     }
                   break;
                   case UndoOp::ModifyAudioCtrlVal:
-                    if(editable_track && !editable_track->isMidiTrack())
+                    if(editable_track && editable_track->isAudioTrack())
                     {
                       AudioTrack* audio_track = static_cast<AudioTrack*>(editable_track);
                       const AutomationType automation_type = audio_track->automationType();
@@ -5853,7 +5959,7 @@ void Song::executeOperationGroup3(Undo& operations)
                     }
                   break;
                   case UndoOp::ModifyAudioCtrlValList:
-                    if(editable_track && !editable_track->isMidiTrack())
+                    if(editable_track && editable_track->isAudioTrack())
                     {
                       AudioTrack* audio_track = static_cast<AudioTrack*>(editable_track);
                       const AutomationType automation_type = audio_track->automationType();
@@ -5862,7 +5968,7 @@ void Song::executeOperationGroup3(Undo& operations)
                     }
                   break;
                   case UndoOp::ChangeRackEffectPlugin:
-                    if(editable_track && !editable_track->isMidiTrack())
+                    if(editable_track && editable_track->isAudioTrack())
                     {
                       AudioTrack* at = static_cast<AudioTrack*>(editable_track);
                       // Note that for DSSI (at least), the track at this point must already

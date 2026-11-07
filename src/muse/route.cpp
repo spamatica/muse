@@ -1103,6 +1103,7 @@ bool routeCanConnect(const Route& src, const Route& dst)
           case Track::DRUM:
             switch(dst.track->type())
             {
+              case Track::FOLDER:
               case Track::MIDI:
               case Track::DRUM:
               case Track::WAVE:
@@ -1123,6 +1124,7 @@ bool routeCanConnect(const Route& src, const Route& dst)
           case Track::AUDIO_OUTPUT:
             switch(dst.track->type())
             {
+              case Track::FOLDER:
               case Track::MIDI:
               case Track::DRUM:
               case Track::WAVE:
@@ -1142,6 +1144,7 @@ bool routeCanConnect(const Route& src, const Route& dst)
           case Track::AUDIO_INPUT:
             switch(dst.track->type())
             {
+              case Track::FOLDER:
               case Track::MIDI:
               case Track::DRUM:
               case Track::AUDIO_INPUT:
@@ -1159,6 +1162,7 @@ bool routeCanConnect(const Route& src, const Route& dst)
           case Track::WAVE:
             switch(dst.track->type())
             {
+              case Track::FOLDER:
               case Track::MIDI:
               case Track::DRUM:
               case Track::AUDIO_INPUT:
@@ -1176,6 +1180,7 @@ bool routeCanConnect(const Route& src, const Route& dst)
           case Track::AUDIO_GROUP:
             switch(dst.track->type())
             {
+              case Track::FOLDER:
               case Track::MIDI:
               case Track::DRUM:
               case Track::AUDIO_INPUT:
@@ -1193,6 +1198,7 @@ bool routeCanConnect(const Route& src, const Route& dst)
           case Track::AUDIO_AUX:
             switch(dst.track->type())
             {
+              case Track::FOLDER:
               case Track::MIDI:
               case Track::DRUM:
               case Track::AUDIO_INPUT:
@@ -1210,6 +1216,7 @@ bool routeCanConnect(const Route& src, const Route& dst)
           case Track::AUDIO_SOFTSYNTH:
             switch(dst.track->type())
             {
+              case Track::FOLDER:
               case Track::MIDI:
               case Track::DRUM:
               case Track::AUDIO_INPUT:
@@ -1224,6 +1231,9 @@ bool routeCanConnect(const Route& src, const Route& dst)
             }
           break;
           
+          // A folder has no routes.
+          case Track::FOLDER:
+            return false;
         }
         
         if((src.channel == -1 && dst.channel != -1) || (dst.channel == -1 && src.channel != -1))
@@ -1490,6 +1500,7 @@ bool routesCompatible(const Route& src, const Route& dst, bool check_types_only)
           case Track::DRUM:
             switch(dst.track->type())
             {
+              case Track::FOLDER:
               case Track::MIDI:
               case Track::DRUM:
               case Track::WAVE:
@@ -1510,6 +1521,7 @@ bool routesCompatible(const Route& src, const Route& dst, bool check_types_only)
           case Track::AUDIO_OUTPUT:
             switch(dst.track->type())
             {
+              case Track::FOLDER:
               case Track::MIDI:
               case Track::DRUM:
               case Track::WAVE:
@@ -1529,6 +1541,7 @@ bool routesCompatible(const Route& src, const Route& dst, bool check_types_only)
           case Track::AUDIO_INPUT:
             switch(dst.track->type())
             {
+              case Track::FOLDER:
               case Track::MIDI:
               case Track::DRUM:
               case Track::AUDIO_INPUT:
@@ -1546,6 +1559,7 @@ bool routesCompatible(const Route& src, const Route& dst, bool check_types_only)
           case Track::WAVE:
             switch(dst.track->type())
             {
+              case Track::FOLDER:
               case Track::MIDI:
               case Track::DRUM:
               case Track::AUDIO_INPUT:
@@ -1563,6 +1577,7 @@ bool routesCompatible(const Route& src, const Route& dst, bool check_types_only)
           case Track::AUDIO_GROUP:
             switch(dst.track->type())
             {
+              case Track::FOLDER:
               case Track::MIDI:
               case Track::DRUM:
               case Track::AUDIO_INPUT:
@@ -1580,6 +1595,7 @@ bool routesCompatible(const Route& src, const Route& dst, bool check_types_only)
           case Track::AUDIO_AUX:
             switch(dst.track->type())
             {
+              case Track::FOLDER:
               case Track::MIDI:
               case Track::DRUM:
               case Track::AUDIO_INPUT:
@@ -1597,6 +1613,7 @@ bool routesCompatible(const Route& src, const Route& dst, bool check_types_only)
           case Track::AUDIO_SOFTSYNTH:
             switch(dst.track->type())
             {
+              case Track::FOLDER:
               case Track::MIDI:
               case Track::DRUM:
               case Track::AUDIO_INPUT:
@@ -1611,6 +1628,9 @@ bool routesCompatible(const Route& src, const Route& dst, bool check_types_only)
             }
           break;
           
+          // A folder has no routes.
+          case Track::FOLDER:
+            return false;
         }
 
         // Don't bother with the circular route check, below.

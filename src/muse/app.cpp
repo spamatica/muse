@@ -4777,7 +4777,7 @@ void MusE::switchMixerAutomation()
       {
         MusECore::TrackList* tracks = MusEGlobal::song->tracks();
         for (MusECore::iTrack i = tracks->begin(); i != tracks->end(); ++i) {
-              if ((*i)->isMidiTrack())
+              if (!(*i)->isAudioTrack())
                     continue;
               MusECore::AudioTrack* track = static_cast<MusECore::AudioTrack*>(*i);
               if(track->automationType() != MusECore::AUTO_OFF) // && track->automationType() != MusECore::AUTO_WRITE)
@@ -4811,7 +4811,7 @@ void MusE::clearAutomation()
 
       MusECore::TrackList* tracks = MusEGlobal::song->tracks();
       for (MusECore::iTrack i = tracks->begin(); i != tracks->end(); ++i) {
-            if ((*i)->isMidiTrack())
+            if (!(*i)->isAudioTrack())
                   continue;
             static_cast<MusECore::AudioTrack*>(*i)->controller()->clearAllAutomation();
             }
@@ -4838,7 +4838,7 @@ void MusE::takeAutomationSnapshot()
       const int frame = MusEGlobal::audio->curFramePos();
       MusECore::TrackList* tracks = MusEGlobal::song->tracks();
       for (MusECore::iTrack i = tracks->begin(); i != tracks->end(); ++i) {
-            if ((*i)->isMidiTrack())
+            if (!(*i)->isAudioTrack())
                   continue;
             MusECore::AudioTrack* track = static_cast<MusECore::AudioTrack*>(*i);
             MusECore::CtrlListList* cll = track->controller();

@@ -29,6 +29,7 @@
 #include "track.h"
 #include "synth.h"
 #include "app.h"
+#include "song.h"
 #include "globals.h"
 
 namespace MusEGui {
@@ -128,6 +129,9 @@ void VisibleTracks::visibilityChanged(QAction* action)
     default:
         break;
     }
+    // Hidden tracks must not be selected, so that actions on the selected tracks never affect them.
+    if (MusEGlobal::song->unselectHiddenTracks())
+        MusEGlobal::song->update(SC_TRACK_SELECTION);
     // Save settings. Use simple version - do NOT set style or stylesheet, this has nothing to do with that.
     MusEGlobal::muse->changeConfig(true);
     emit visibilityChanged();

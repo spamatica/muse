@@ -1784,7 +1784,7 @@ bool delete_selected_audio_automation(Undo& operations)
   TrackList* tl = MusEGlobal::song->tracks();
   for (iTrack it = tl->begin(); it != tl->end(); ++it)
   {
-    if((*it)->isMidiTrack() /*|| !(*it)->isVisible()*/)
+    if(!(*it)->isAudioTrack() /*|| !(*it)->isVisible()*/)
       continue;
     AudioTrack* at = static_cast<AudioTrack*>(*it);
     for(iCtrlList icl = at->controller()->begin(); icl != at->controller()->end(); ++icl)
@@ -2886,7 +2886,7 @@ void processArrangerPasteObjects(
           if(trackUuid.isNull())
             continue;
           const MusECore::Track* t = tl->findUuid(trackUuid);
-          if(!t || t->isMidiTrack())
+          if(!t || !t->isAudioTrack())
             continue;
           const MusECore::AudioTrack* at = static_cast<const MusECore::AudioTrack*>(t);
           const MusECore::CtrlListList* track_cll = at->controller();

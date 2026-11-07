@@ -40,6 +40,7 @@
 #include "app.h"
 #include "driver/jackmidi.h"
 #include "driver/alsamidi.h"
+#include <algorithm>
 #include "song.h"
 //#include "key.h"
 #include "globals.h"
@@ -337,7 +338,7 @@ Track* Song::addNewTrack(QAction* action, Track* insertAt)
     {
         // Ignore AUDIO_SOFTSYNTH (or anything greater, to allow for other entries in some menu),
         //  now that we have it as the synth menu id, since addTrack doesn't like it.
-        if((Track::TrackType)n >= Track::AUDIO_SOFTSYNTH)
+        if((Track::TrackType)n >= Track::AUDIO_SOFTSYNTH && (Track::TrackType)n != Track::FOLDER)
             return nullptr;
 
         Track* t = addTrack((Track::TrackType)n, insertAt);
@@ -381,6 +382,9 @@ Track* Song::createTrack(Track::TrackType type, bool setDefaults)
                   break;
             case Track::AUDIO_INPUT:
                   track = new AudioInput();
+                  break;
+            case Track::FOLDER:
+                  track = new FolderTrack();
                   break;
             case Track::AUDIO_SOFTSYNTH:
                   fprintf(stderr, "not implemented: Song::createTrack(SOFTSYNTH)\n");
@@ -544,6 +548,8 @@ Track* Song::addTrack(Track::TrackType type, Track* insertAt)
             case Track::AUDIO_INPUT:
                   if (MusEGlobal::config.unhideTracks) AudioInput::setVisible(true);
                   break;
+            case Track::FOLDER:
+                  break;
             case Track::AUDIO_SOFTSYNTH:
                   fprintf(stderr, "not implemented: Song::addTrack(SOFTSYNTH)\n");
                   return nullptr;
@@ -574,6 +580,10 @@ void Song::duplicateTracks(Track *t)
     int midi_found = 0;
     int new_drum_found = 0;
 
+    // Folders can not be duplicated (for now).
+    if (t && t->isFolderTrack())
+        return;
+
     if (t) {
         if (t->type() == Track::DRUM)
             ++new_drum_found;
@@ -583,7 +593,7 @@ void Song::duplicateTracks(Track *t)
             ++audio_found;
     } else {
         for (ciTrack it = tl.cbegin(); it != tl.cend(); ++it)
-            if ((*it)->selected())
+            if ((*it)->selected() && !(*it)->isFolderTrack())
             {
                 Track::TrackType type = (*it)->type();
                 if (type == Track::DRUM)
@@ -658,7 +668,7 @@ void Song::duplicateTracks(Track *t)
         for(TrackList::const_reverse_iterator it = tl.crbegin(); it != tl.crend(); ++it)
         {
             Track* track = *it;
-            if(track->selected())
+            if(track->selected() && !track->isFolderTrack())
             {
                 if(names.genUniqueNames(track->type(), track->name(), copies))
                 {
@@ -838,7 +848,7 @@ Event Song::deleteEventOperation(const Event& event, Part* part, bool do_port_ct
 
 bool Song::swapPluginsOperation(UndoOp *i)
 {
-  if(!i->track || i->track->isMidiTrack())
+  if(!i->track || !i->track->isAudioTrack())
     return false;
   Track *track = const_cast<Track*>(i->track);
 
@@ -1134,7 +1144,7 @@ bool Song::swapPluginsOperation(UndoOp *i)
 
 bool Song::changePluginOperation(UndoOp *i)
 {
-  if(!i->track || i->track->isMidiTrack())
+  if(!i->track || !i->track->isAudioTrack())
     return false;
   Track *track = const_cast<Track*>(i->track);
 
@@ -1633,7 +1643,7 @@ bool Song::changePluginOperation(UndoOp *i)
 
 bool Song::movePluginOperation(UndoOp *i)
 {
-  if(!i->_plugMoveSrcTrack || !i->track || i->_plugMoveSrcTrack->isMidiTrack() || i->track->isMidiTrack())
+  if(!i->_plugMoveSrcTrack || !i->track || !i->_plugMoveSrcTrack->isAudioTrack() || !i->track->isAudioTrack())
     return false;
   Track *src_track = const_cast<Track*>(i->_plugMoveSrcTrack);
   Track *track = const_cast<Track*>(i->track);
@@ -2161,7 +2171,7 @@ bool Song::movePluginOperation(UndoOp *i)
 
 bool Song::revertMovePluginOperation(UndoOp *i)
 {
-  if(!i->_plugMoveSrcTrack || !i->track || i->_plugMoveSrcTrack->isMidiTrack() || i->track->isMidiTrack())
+  if(!i->_plugMoveSrcTrack || !i->track || !i->_plugMoveSrcTrack->isAudioTrack() || !i->track->isAudioTrack())
     return false;
   Track *src_track = const_cast<Track*>(i->_plugMoveSrcTrack);
   Track *track = const_cast<Track*>(i->track);
@@ -5242,7 +5252,7 @@ int Song::execAutomationCtlPopup(Track* track, const QPoint& menupos, MidiAudioC
   const bool canAssignToSong = idType == MusECore::MidiAudioCtrlStruct::NonAudioControl || isBuiltInAudioCtrl;
 
   AudioTrack* atrack = nullptr;
-  if(track && !track->isMidiTrack() && idType == MidiAudioCtrlStruct::AudioControl)
+  if(track && track->isAudioTrack() && idType == MidiAudioCtrlStruct::AudioControl)
   {
     atrack = static_cast<AudioTrack*>(track);
     ciCtrlList icl = atrack->controller()->find(id);
@@ -6142,7 +6152,7 @@ void Song::reenableTouchedControllers(bool forceAll)
 {
   for(iTrack it = _tracks.begin(); it != _tracks.end(); ++it)
   {
-    if((*it)->isMidiTrack())
+    if(!(*it)->isAudioTrack())
       continue;
     AudioTrack* t = static_cast<AudioTrack*>(*it);
     AutomationType at = t->automationType();
@@ -6179,7 +6189,7 @@ void Song::processAutomationEvents(Undo* operations)
 
   for(iTrack i = _tracks.begin(); i != _tracks.end(); ++i)
   {
-    if(!(*i)->isMidiTrack())
+    if((*i)->isAudioTrack())
       // Process (and clear) rec events.
       processTrackAutomationEvents((AudioTrack*)*i, opsp);
   }
@@ -6203,7 +6213,7 @@ bool Song::collectAudioCtrlPasteModeOps(
       iatm != trackMap.end(); ++iatm)
   {
     const MusECore::Track* t = iatm->first;
-    if(t->isMidiTrack())
+    if(!t->isAudioTrack())
       continue;
     const MusECore::AudioTrack* at = static_cast<const MusECore::AudioTrack*>(t);
     MusECore::AudioAutomationItemMap& atm = iatm->second;
@@ -6764,6 +6774,263 @@ void Song::connectAudioPorts()
 //   insertTrack0
 //---------------------------------------------------------
 
+//---------------------------------------------------------
+//   folderHasTracks
+//---------------------------------------------------------
+
+bool Song::folderHasTracks(const FolderTrack* folder) const
+{
+  for(ciTrack it = _tracks.cbegin(); it != _tracks.cend(); ++it)
+    if((*it)->folder() == folder)
+      return true;
+  return false;
+}
+
+//---------------------------------------------------------
+//   unselectHiddenTracks
+//---------------------------------------------------------
+
+bool Song::unselectHiddenTracks()
+{
+  bool changed = false;
+  for(iTrack it = _tracks.begin(); it != _tracks.end(); ++it)
+  {
+    Track* t = *it;
+    if(t->selected() && !t->isVisible())
+    {
+      t->setSelected(false);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+//---------------------------------------------------------
+//   applyTrackOrder
+//---------------------------------------------------------
+
+void Song::applyTrackOrder(const std::vector<Track*>& order, const std::map<Track*, FolderTrack*>& folders)
+{
+  Undo ops;
+  if(order.size() == _tracks.size() && !std::equal(order.begin(), order.end(), _tracks.begin()))
+    ops.push_back(UndoOp(UndoOp::ReorderTracks, new std::vector<Track*>(order)));
+  for(ciTrack it = _tracks.cbegin(); it != _tracks.cend(); ++it)
+  {
+    Track* t = *it;
+    const auto fit = folders.find(t);
+    if(fit != folders.end() && fit->second != t->folder())
+      ops.push_back(UndoOp(UndoOp::ModifyTrackFolder, t, t->folder(), fit->second));
+  }
+  if(!ops.empty())
+    applyOperationGroup(ops);
+}
+
+//---------------------------------------------------------
+//   folder helpers for the order of the tracks
+//---------------------------------------------------------
+
+namespace {
+
+// The track list as it will be, and the folder of each track.
+struct TrackOrder
+{
+  std::vector<Track*> order;
+  std::map<Track*, FolderTrack*> inFolder;
+
+  explicit TrackOrder(const TrackList& tl) : order(tl.begin(), tl.end())
+  {
+    for(Track* t : order)
+      inFolder[t] = t->folder();
+  }
+  int indexOf(const Track* t) const
+  {
+    for(size_t i = 0; i < order.size(); ++i)
+      if(order[i] == t)
+        return int(i);
+    return -1;
+  }
+  // The index after the last track of the folder, or just after the track if it is not a folder.
+  int blockEnd(int i)
+  {
+    Track* head = order[i];
+    int e = i + 1;
+    if(head->isFolderTrack())
+      while(e < int(order.size()) && inFolder[order[e]] == head)
+        ++e;
+    return e;
+  }
+};
+
+// Moves the selected items up or down in the vector, as Song::moveSelectedTracks does. Returns whether it changed.
+template<class T, class Selected>
+bool moveSelectedItems(std::vector<T>& v, Selected selected, bool up, bool full)
+{
+  size_t count = 0;
+  for(const T& item : v)
+    if(selected(item))
+      ++count;
+  if(count == 0 || v.size() < 2 || (up && selected(v.front())) || (!up && selected(v.back())))
+    return false;
+
+  std::vector<T> tmp = v;
+  unsigned delta = 1;
+  bool deltaFound = false;
+  if(up)
+  {
+    for(size_t i = 0; i < v.size(); ++i)
+    {
+      if(!selected(v[i]))
+        continue;
+      if(full && !deltaFound)
+      {
+        delta = unsigned(i);
+        deltaFound = true;
+      }
+      size_t sidx = i;
+      for(unsigned k = delta; k--; --sidx)
+        std::swap(tmp[sidx], tmp[sidx - 1]);
+    }
+  }
+  else
+  {
+    for(size_t r = v.size(); r-- > 0; )
+    {
+      if(!selected(v[r]))
+        continue;
+      if(full && !deltaFound)
+      {
+        delta = unsigned(v.size() - r - 1);
+        deltaFound = true;
+      }
+      size_t sidx = r;
+      for(unsigned k = delta; k--; ++sidx)
+        std::swap(tmp[sidx], tmp[sidx + 1]);
+    }
+  }
+  v.swap(tmp);
+  return true;
+}
+
+} // anonymous namespace
+
+//---------------------------------------------------------
+//   moveTracksToFolder
+//    The tracks of a folder follow it in the track list. So a track that is put in a folder is moved
+//    to just after the last track of the folder, and one that is taken out is moved to just after
+//    the folder's tracks. The moves and the changes of the folder are in one undo step.
+//---------------------------------------------------------
+
+void Song::moveTracksToFolder(const std::vector<Track*>& tracksToMove, FolderTrack* folder)
+{
+  TrackOrder to(_tracks);
+
+  // In the order of the track list, so that they keep their order.
+  for(Track* t : std::vector<Track*>(to.order))
+  {
+    if(t->isFolderTrack() || std::find(tracksToMove.begin(), tracksToMove.end(), t) == tracksToMove.end())
+      continue;
+    FolderTrack* const old_folder = to.inFolder[t];
+    if(old_folder == folder)
+      continue;
+
+    to.order.erase(to.order.begin() + to.indexOf(t));
+    // The track is after the last track of the folder that it goes to, or that it comes from.
+    FolderTrack* const target = folder ? folder : old_folder;
+    const int fi = to.indexOf(target);
+    const int ins = fi >= 0 ? to.blockEnd(fi) : 0;
+    to.order.insert(to.order.begin() + ins, t);
+    to.inFolder[t] = folder;
+  }
+  applyTrackOrder(to.order, to.inFolder);
+}
+
+//---------------------------------------------------------
+//   dragMoveTrack
+//---------------------------------------------------------
+
+void Song::dragMoveTrack(Track* dragged, Track* target)
+{
+  if(!dragged || !target || dragged == target)
+    return;
+  TrackOrder to(_tracks);
+  const int from = to.indexOf(dragged);
+  const int dest = to.indexOf(target);
+  if(from < 0 || dest < 0)
+    return;
+  const bool down = dest > from;
+
+  if(dragged->isFolderTrack())
+  {
+    // Folders are not in folders: A track in a folder stands for its folder.
+    Track* tgt = target->folder() ? static_cast<Track*>(target->folder()) : target;
+    if(tgt == dragged)
+      return;
+    const int end = to.blockEnd(from);
+    const std::vector<Track*> block(to.order.begin() + from, to.order.begin() + end);
+    to.order.erase(to.order.begin() + from, to.order.begin() + end);
+    const int ti = to.indexOf(tgt);
+    to.order.insert(to.order.begin() + (down ? to.blockEnd(ti) : ti), block.begin(), block.end());
+  }
+  else
+  {
+    FolderTrack* new_folder = nullptr;
+    bool in_folder_block = false;
+    if(target->isFolderTrack())
+    {
+      new_folder = static_cast<FolderTrack*>(target);
+      in_folder_block = true;
+    }
+    else if(target->folder())
+      new_folder = target->folder();
+
+    to.order.erase(to.order.begin() + from);
+    const int ti = to.indexOf(target);
+    // On a folder: As its last track. Otherwise to the place of the target.
+    const int ins = in_folder_block ? to.blockEnd(ti) : (down ? ti + 1 : ti);
+    to.order.insert(to.order.begin() + ins, dragged);
+    to.inFolder[dragged] = new_folder;
+  }
+  applyTrackOrder(to.order, to.inFolder);
+}
+
+//---------------------------------------------------------
+//   moveSelectedTracks
+//---------------------------------------------------------
+
+void Song::moveSelectedTracks(bool up, bool full)
+{
+  // Top level: The tracks that are not in a folder, and the folders with their tracks.
+  struct Unit
+  {
+    Track* head;
+    std::vector<Track*> kids;
+  };
+  std::vector<Unit> units;
+  for(ciTrack it = _tracks.cbegin(); it != _tracks.cend(); ++it)
+  {
+    Track* t = *it;
+    if(t->folder() && !units.empty() && units.back().head == t->folder())
+      units.back().kids.push_back(t);
+    else
+      units.push_back(Unit{t, {}});
+  }
+
+  bool changed = moveSelectedItems(units, [](const Unit& u) { return u.head->selected(); }, up, full);
+  for(Unit& u : units)
+    changed |= moveSelectedItems(u.kids, [](const Track* t) { return t->selected(); }, up, full);
+  if(!changed)
+    return;
+
+  std::vector<Track*> order;
+  for(const Unit& u : units)
+  {
+    order.push_back(u.head);
+    order.insert(order.end(), u.kids.begin(), u.kids.end());
+  }
+  // The folders of the tracks do not change.
+  applyTrackOrder(order, std::map<Track*, FolderTrack*>());
+}
+
 void Song::insertTrack0(Track* track, int idx)
       {
       int n;
@@ -6801,6 +7068,8 @@ void Song::insertTrack0(Track* track, int idx)
                   _synthIs.push_back(s);
                   }
                   break;
+            case Track::FOLDER:
+                  break;
             default:
                   fprintf(stderr, "unknown track type %d\n", track->type());
                   return;
@@ -6813,7 +7082,7 @@ void Song::insertTrack0(Track* track, int idx)
       
       n = _auxs.size();
       for (const auto &it : _tracks) {
-            if (it->isMidiTrack())
+            if (!it->isAudioTrack())
                   continue;
             MusECore::AudioTrack* wt = (MusECore::AudioTrack*)it;
             if (wt->hasAuxSend()) {
@@ -6943,6 +7212,9 @@ void Song::insertTrackOperation(Track* track, int idx, PendingOperationList& ops
                   sec_track_list = &_synthIs;
                   }
                   break;
+            case Track::FOLDER:
+                  // Only in the track list.
+                  break;
             default:
                   fprintf(stderr, "unknown track type %d\n", track->type());
                   return;
@@ -7006,6 +7278,8 @@ void Song::removeTrackOperation(Track* track, PendingOperationList& ops)
                   
                   sec_track_list = &_synthIs;
             }
+            break;
+            case Track::FOLDER:
             break;
       }
 
@@ -7877,7 +8151,7 @@ void Song::PluginGuiTitlesAboutToChange(Track *track) const
   if(!track)
     return;
   // If it's an audio track, inform all relevant rack effect UIs.
-  if(!track->isMidiTrack())
+  if(track->isAudioTrack())
   {
     AudioTrack *at = static_cast<AudioTrack*>(track);
     const Pipeline *pl = at->efxPipe();
@@ -7915,7 +8189,7 @@ void Song::PluginGuiTitlesAboutToChange(int trackNumFrom, int trackNumTo) const
 
 void Song::PluginGuiTitlesAboutToChange(Track* track, int effRackPosFrom, int effRackPosTo) const
 {
-  if(!track || track->isMidiTrack())
+  if(!track || !track->isAudioTrack())
     return;
   AudioTrack *at = static_cast<AudioTrack*>(track);
   const Pipeline *pl = at->efxPipe();
@@ -7943,7 +8217,7 @@ void Song::showPendingPluginGuis(Track* track) const
   if(!track)
     return;
   // If it's an audio track, update all rack effect UIs.
-  if(!track->isMidiTrack())
+  if(track->isAudioTrack())
   {
     AudioTrack *at = static_cast<AudioTrack*>(track);
     at->showPendingPluginGuis();
@@ -7974,7 +8248,7 @@ void Song::showPendingPluginGuis(int trackNumFrom, int trackNumTo) const
 
 void Song::showPendingPluginGuis(Track* track, int effRackPosFrom, int effRackPosTo) const
 {
-  if(!track || track->isMidiTrack())
+  if(!track || !track->isAudioTrack())
     return;
   AudioTrack *at = static_cast<AudioTrack*>(track);
   const Pipeline *pl = at->efxPipe();
@@ -8007,7 +8281,7 @@ void Song::updateUiWindowTitles(Track* track) const
   if(!track)
     return;
   // If it's an audio track, update all rack effect UIs.
-  if(!track->isMidiTrack())
+  if(track->isAudioTrack())
   {
     AudioTrack *at = static_cast<AudioTrack*>(track);
     at->updateUiWindowTitles();
@@ -8036,7 +8310,7 @@ void Song::updateUiWindowTitles(int trackNumFrom, int trackNumTo) const
 
 void Song::updateUiWindowTitles(Track* track, int effRackPosFrom, int effRackPosTo) const
 {
-  if(!track || track->isMidiTrack())
+  if(!track || !track->isAudioTrack())
     return;
   AudioTrack *at = static_cast<AudioTrack*>(track);
   const Pipeline *pl = at->efxPipe();
@@ -8085,7 +8359,7 @@ PluginI* Song::findRackPlugin(const QString &name)
   for(ciTrack it = tl->cbegin(); it != tl->cend(); ++it)
   {
     Track *t = *it;
-    if(t->isMidiTrack())
+    if(!t->isAudioTrack())
       continue;
     PluginI *pi = static_cast<AudioTrack*>(t)->efxPipe()->findPlugin(name);
     if(pi)
@@ -8100,7 +8374,7 @@ const PluginI* Song::findRackPlugin(const QString &name) const
   for(ciTrack it = tl->cbegin(); it != tl->cend(); ++it)
   {
     const Track *t = *it;
-    if(t->isMidiTrack())
+    if(!t->isAudioTrack())
       continue;
     const PluginI *pi = static_cast<const AudioTrack*>(t)->efxPipe()->findPlugin(name);
     if(pi)

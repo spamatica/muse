@@ -712,6 +712,11 @@ void Song::read(Xml& xml, bool /*isTemplate*/)
                               insertTrack0(track,-1);
                               track->showPendingPluginGuis();
                               }
+                        else if (tag == "FolderTrack") {
+                              FolderTrack* track = new FolderTrack();
+                              track->read(xml, &stats);
+                              insertTrack0(track, -1);
+                              }
                         else if (tag == "AudioGroup") {
                               AudioGroup* track = new AudioGroup();
                               track->read(xml, &stats);
@@ -936,8 +941,44 @@ static void resolveStripReferences(MusEGlobal::MixerConfig* mconfig)
 //   resolveSongfileReferences
 //--------------------------------
 
+//---------------------------------------------------------
+//   resolveFolderReferences
+//    The tracks were read with the name of their folder. Find the folders. The folders are before
+//    their tracks in the file, but this does not depend on it.
+//    Hidden tracks (in a folded folder, or of a hidden type) can not be selected.
+//---------------------------------------------------------
+
+void Song::resolveFolderReferences()
+{
+  for(iTrack it = _tracks.begin(); it != _tracks.end(); ++it)
+  {
+    Track* t = *it;
+    if(t->folderNameRead().isEmpty())
+      continue;
+    FolderTrack* folder = nullptr;
+    for(iTrack fit = _tracks.begin(); fit != _tracks.end(); ++fit)
+      if((*fit)->isFolderTrack() && (*fit)->name() == t->folderNameRead())
+      {
+        folder = static_cast<FolderTrack*>(*fit);
+        break;
+      }
+    if(!folder)
+      fprintf(stderr, "Song::resolveFolderReferences: folder <%s> of track <%s> not found\n",
+              t->folderNameRead().toLocal8Bit().constData(), t->name().toLocal8Bit().constData());
+    t->setFolder(folder);
+    t->clearFolderNameRead();
+  }
+  // Hidden tracks, in a folded folder or of a hidden type, can not be selected.
+  unselectHiddenTracks();
+}
+
 void Song::resolveSongfileReferences()
 {
+  //-----------------------------------------------
+  // Resolve folder references:
+  //-----------------------------------------------
+  resolveFolderReferences();
+
   //-----------------------------------------------
   // Resolve instrument references:
   //-----------------------------------------------

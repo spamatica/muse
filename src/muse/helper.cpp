@@ -1441,6 +1441,7 @@ void midiPortsPopupMenu(MusECore::Track* t, int x, int y, bool allClassPorts,
       case MusECore::Track::AUDIO_INPUT:
       case MusECore::Track::AUDIO_GROUP:
       case MusECore::Track::AUDIO_AUX:    //TODO
+      case MusECore::Track::FOLDER:
             break;
       }
 }
@@ -1518,6 +1519,13 @@ QActionGroup* populateAddTrack(QMenu* addTrack, bool populateAll, bool insert, b
             aaux->setText(aaux->text() + "\t" + QKeySequence(shortcuts[insert ? SHRT_INSERT_AUDIO_AUX : SHRT_ADD_AUDIO_AUX].key).toString());
         grp->addAction(aaux);
       }
+
+      // A folder is always available. It is only for keeping tracks in order.
+      addTrack->addSeparator();
+      QAction* afolder = addTrack->addAction(*trackFolderSVGIcon,
+                                             qApp->translate("@default", QT_TRANSLATE_NOOP("@default", "Folder")));
+      afolder->setData(MusECore::Track::FOLDER);
+      grp->addAction(afolder);
 
       if (populateAll || MusECore::SynthI::visible()) {
           addTrack->addSeparator();

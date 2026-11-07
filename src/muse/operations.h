@@ -24,6 +24,7 @@
 #define __OPERATIONS_H__
 
 #include <list> 
+#include <vector>
 #include <map> 
 #include <set>
 #include <stdint.h>
@@ -47,6 +48,7 @@ namespace MusECore {
 
 // Forward declarations:
 class TempoList;
+class FolderTrack;
 class SigList;
 class KeyList;
 class MidiPort;
@@ -160,7 +162,7 @@ struct PendingOperationItem
     AddMidiDevice,     DeleteMidiDevice,       
     ModifyMidiDeviceAddress,         ModifyMidiDeviceFlags,       ModifyMidiDeviceName,
     SetInstrument,
-    AddTrack,          DeleteTrack,  MoveTrack,                   ModifyTrackName,
+    AddTrack,          DeleteTrack,  MoveTrack,                   ModifyTrackName,  ModifyTrackFolder,  SetTrackOrder,
     SetTrackRecord, SetTrackMute, SetTrackSolo, SetTrackRecMonitor, SetTrackOff,
     ModifyTrackDrumMapItem, ReplaceTrackDrumMapPatchList,         UpdateDrumMaps,
     AddPart,           DeletePart,   MovePart, SelectPart, ModifyPartStart, ModifyPartLength,  ModifyPartName, ModifyPartVolume, ModifyPartFadeIn, ModifyPartFadeOut,
@@ -209,6 +211,8 @@ struct PendingOperationItem
     int* _audioSamplesLen;
     CtrlListList* _src_aud_ctrl_list_list;
     Track* _srcTrack;
+    // For SetTrackOrder.
+    std::vector<Track*>* _track_order;
     MidiAudioCtrlMap *_src_midi_audio_ctrl_map;
   };
   
@@ -443,6 +447,14 @@ struct PendingOperationItem
     
   PendingOperationItem(Track* track, const QString* new_name, PendingOperationType type = ModifyTrackName)
     { _type = type; _track = track; _name = new_name; }
+
+  // For SetTrackOrder: Swaps the contents of the track list with the vector. Swapping again swaps back.
+  PendingOperationItem(TrackList* tl, std::vector<Track*>* order, PendingOperationType type = SetTrackOrder)
+    { _type = type; _track_list = tl; _track_order = order; }
+
+  // For ModifyTrackFolder. The folder can be null.
+  PendingOperationItem(Track* track, FolderTrack* folder, PendingOperationType type = ModifyTrackFolder)
+    { _type = type; _track = track; _srcTrack = folder; }
     
    // type is SetTrackRecord, SetTrackMute, SetTrackSolo, SetTrackRecMonitor, SetTrackOff
   PendingOperationItem(Track* track, bool v, PendingOperationType type)

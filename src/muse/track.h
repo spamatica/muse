@@ -57,6 +57,7 @@ class Pipeline;
 class PluginI;
 class MidiPort;
 class SynthI;
+class FolderTrack;
 class Xml;
 struct DrumMap;
 class WorkingDrumMapList;
@@ -76,7 +77,7 @@ class Track {
    public:
       enum TrackType {
          MIDI=0, DRUM, WAVE, AUDIO_OUTPUT, AUDIO_INPUT, AUDIO_GROUP,
-         AUDIO_AUX, AUDIO_SOFTSYNTH
+         AUDIO_AUX, AUDIO_SOFTSYNTH, FOLDER
          };
       // NOTE: ASSIGN_DUPLICATE_PARTS ASSIGN_COPY_PARTS and ASSIGN_CLONE_PARTS are not allowed together - choose one. 
       // (Safe, but it will choose one action over the other.)
@@ -133,6 +134,12 @@ class Track {
 
       int _y;
       int _height;            // visual height in arranger
+
+      // The folder (an arranger organization row) that this track is in, or null.
+      // The tracks of a folder follow it in the track list. Folders are not in folders.
+      FolderTrack* _folder;
+      // Only while reading a song: The name of the folder, resolved by Song after all tracks are read.
+      QString _folderNameRead;
 
       bool _locked;
       bool _selected;
@@ -399,6 +406,15 @@ class Track {
       int channels() const                { return _channels; }
       virtual void setChannels(int n);
       bool isMidiTrack() const       { return type() == MIDI || type() == DRUM; }
+      bool isFolderTrack() const     { return type() == FOLDER; }
+      // Whether the track is one of the AudioTrack classes. (Not midi, not a folder.)
+      bool isAudioTrack() const      { return type() != MIDI && type() != DRUM && type() != FOLDER; }
+      // The folder that the track is in, or null. See FolderTrack.
+      FolderTrack* folder() const    { return _folder; }
+      void setFolder(FolderTrack* f) { _folder = f; }
+      // For Song, when reading a song file: The name of the folder, to be resolved later.
+      const QString& folderNameRead() const { return _folderNameRead; }
+      void clearFolderNameRead()     { _folderNameRead.clear(); }
       bool isDrumTrack() const       { return type() == DRUM; }
       bool isSynthTrack() const      { return type() == AUDIO_SOFTSYNTH; }
       // A frozen track, or a midi track that plays a frozen synth, can not be edited: What it plays
@@ -1184,6 +1200,49 @@ class WaveTrack : public AudioTrack {
 //---------------------------------------------------------
 //   TrackList
 //---------------------------------------------------------
+
+//---------------------------------------------------------
+//   FolderTrack
+//    A row in the arranger that other tracks can be put in, to keep the tracks in order.
+//    It is only for the user interface: It has no audio or midi, no parts and no routes, and nothing
+//    in the engine processes it. The tracks in it follow it in the track list, see Track::folder().
+//    When folded, its tracks are hidden (see Track::isVisible()).
+//---------------------------------------------------------
+
+class FolderTrack : public Track {
+      bool _folded;
+
+   public:
+      FolderTrack();
+      FolderTrack(const FolderTrack&, int flags);
+
+      virtual FolderTrack* clone(int flags) const { return new FolderTrack(*this, flags); }
+      virtual void assign(const Track&, int flags);
+
+      void read(Xml&, XmlReadStatistics* stats = nullptr);
+      virtual void write(int, Xml&, XmlWriteStatistics* stats = nullptr) const;
+
+      bool folded() const { return _folded; }
+      void setFolded(bool f) { _folded = f; }
+
+      virtual int height() const;
+
+      // Nothing below applies to a folder. They are here because they are required of all tracks.
+      virtual bool setRecordFlag1(bool) { return false; }
+      virtual void setRecordFlag2(bool) { }
+      virtual bool setRecordFlag2AndCheckMonitor(bool) { return false; }
+      virtual Part* newPart(Part* = nullptr, bool = false) { return nullptr; }
+      virtual void setSolo(bool) { }
+      virtual void updateSoloStates(bool) { }
+      virtual AutomationType automationType() const { return AUTO_OFF; }
+      virtual void setAutomationType(AutomationType) { }
+      virtual bool isLatencyInputTerminal() { return false; }
+      virtual bool isLatencyOutputTerminal() { return false; }
+      virtual TrackLatencyInfo& getDominanceInfo(bool) { return _latencyInfo; }
+      virtual TrackLatencyInfo& getDominanceLatencyInfo(bool) { return _latencyInfo; }
+      virtual TrackLatencyInfo& setCorrectionLatencyInfo(bool, float, float = 0.0f) { return _latencyInfo; }
+      virtual TrackLatencyInfo& getLatencyInfo(bool) { return _latencyInfo; }
+      };
 
 template<class T> class tracklist : public std::vector<Track*> {
       typedef std::vector<Track*> vlist;

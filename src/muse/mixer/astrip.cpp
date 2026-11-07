@@ -951,7 +951,7 @@ void AudioStrip::configChanged()
   double track_vol = 0.0;
   double vol_min = 0.0;
   double vol_max = 3.16227766017 /* roughly 10 db */;
-  if(!track->isMidiTrack())
+  if(track->isAudioTrack())
   {
     const MusECore::AudioTrack* at = static_cast<MusECore::AudioTrack*>(track);
     track_vol = at->volume();
@@ -1237,7 +1237,7 @@ void AudioStrip::volumeChanged(double val, int id, int scrollMode)
 {
   DEBUG_AUDIO_STRIP(stderr, "AudioStrip::volumeChanged id:%d val:%.20f scrollMode:%d\n", id, val, scrollMode);
 
-  if(!track || track->isMidiTrack())
+  if(!track || !track->isAudioTrack())
     return;
 
   MusECore::AudioTrack* at = static_cast<MusECore::AudioTrack*>(track);
@@ -1258,7 +1258,7 @@ void AudioStrip::volumeChanged(double val, int id, int scrollMode)
 void AudioStrip::volumePressed(double val, int id)
       {
       DEBUG_AUDIO_STRIP(stderr, "AudioStrip::volumePressed\n");
-      if(!track || track->isMidiTrack())
+      if(!track || !track->isAudioTrack())
         return;
       MusECore::AudioTrack* at = static_cast<MusECore::AudioTrack*>(track);
       at->startAutoRecord(id, val);
@@ -1277,7 +1277,7 @@ void AudioStrip::volumePressed(double val, int id)
 void AudioStrip::volumeReleased(double val, int id)
       {
       DEBUG_AUDIO_STRIP(stderr, "AudioStrip::volumeReleased\n");
-      if(!track || track->isMidiTrack())
+      if(!track || !track->isAudioTrack())
         return;
 
       MusECore::AudioTrack* at = static_cast<MusECore::AudioTrack*>(track);
@@ -1307,7 +1307,7 @@ void AudioStrip::volumeRightClicked(QPoint p)
 
 void AudioStrip::volLabelChanged(double val)
       {
-      if(!track || track->isMidiTrack())
+      if(!track || !track->isAudioTrack())
         return;
       MusECore::AudioTrack* t = static_cast<MusECore::AudioTrack*>(track);
       t->startAutoRecord(MusECore::AC_VOLUME, val);
@@ -2141,7 +2141,7 @@ void AudioStrip::oRoutePressed()
 
 void AudioStrip::incVolume(int increaseValue)
 {
-  if(!track || track->isMidiTrack())
+  if(!track || !track->isAudioTrack())
     return;
 
   const int id = MusECore::AC_VOLUME;
@@ -2180,7 +2180,7 @@ void AudioStrip::incVolume(int increaseValue)
 
 void AudioStrip::incPan(int increaseValue)
 {
-  if(!track || track->isMidiTrack())
+  if(!track || !track->isAudioTrack())
     return;
 
   const int id = MusECore::AC_PAN;

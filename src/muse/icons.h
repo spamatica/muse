@@ -201,6 +201,7 @@ extern QIcon* trackInputSVGIcon;
 extern QIcon* trackOutputSVGIcon;
 extern QIcon* trackAuxSVGIcon;
 extern QIcon* trackGroupVGIcon;
+extern QIcon* trackFolderSVGIcon;
 
 extern QIcon* synthGuiSVGIcon;
 extern QIcon* ankerSVGIcon;

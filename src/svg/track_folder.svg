@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="SVGRoot" width="64px" height="64px" version="1.1" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+ <rect x="3" y="1.9821" width="58" height="59.036" fill="#fffaeb" style="paint-order:stroke fill markers"/>
+ <path d="m62 1.9501 0.048939 59.958-60.098 0.41542 0.088813-60.326z" fill="none" stroke="#000" stroke-linecap="round" stroke-width="3.1432"/>
+ <g stroke="#000" stroke-linejoin="round" stroke-width="1.6">
+  <path d="m8 20v-6.5q0-2.5 2.5-2.5h14.5l4 5h24q2.5 0 2.5 2.5v1.5z" fill="#a8903a"/>
+  <path d="m8 20h48v26q0 3-3 3h-42q-3 0-3-3z" fill="#786721"/>
+ </g>
+</svg>

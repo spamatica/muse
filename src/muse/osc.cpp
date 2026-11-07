@@ -227,7 +227,7 @@ int oscMessageHandler(const char* path, const char* types, lo_arg** argv,
 
   Track *track = tl->at(urltrackno);
 
-  if(track->isMidiTrack())
+  if(!track->isAudioTrack())
   {
     fprintf(stderr, "oscMessageHandler: error: Track is a midi track\n");
     return oscDebugHandler(path, types, argv, argc, data, user_data);

@@ -756,7 +756,7 @@ PyObject* getAudioTrackVolume(PyObject*, PyObject* args)
             }
 
       //if (t->type() == Track::DRUM || t->type() == Track::MIDI || t->type() == Track::NEW_DRUM)
-        if (t->isMidiTrack()) { // changed by flo. should do the same thing and is better maintainable
+        if (!t->isAudioTrack()) { // changed by flo. should do the same thing and is better maintainable
             Py_RETURN_NONE;
             }
 
@@ -1295,7 +1295,7 @@ bool Song::event(QEvent* _e)
                   if (t == nullptr)
                         return false;
 
-                  if (t->isMidiTrack()) // changed by flo. is better maintainable
+                  if (!t->isAudioTrack()) // changed by flo. is better maintainable
                   //if (t->type() == Track::DRUM || t->type() == Track::NEW_DRUM || t->type() == Track::MIDI)
                         return false;
 

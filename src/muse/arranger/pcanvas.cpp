@@ -362,6 +362,7 @@ void PartCanvas::viewMouseDoubleClickEvent(QMouseEvent* event)
                         case MusECore::Track::AUDIO_GROUP:
                         case MusECore::Track::AUDIO_AUX:
                         case MusECore::Track::AUDIO_SOFTSYNTH:
+                        case MusECore::Track::FOLDER:
                               break;
                         }
                   }
@@ -662,7 +663,7 @@ void PartCanvas::updateAudioAutomation()
 
   bool itemFound = false;
   for (MusECore::ciTrack it = tracks->cbegin(); it != tracks->cend(); ++it) {
-    if((*it)->isMidiTrack())
+    if(!(*it)->isAudioTrack())
       continue;
     const MusECore::AudioTrack* track = static_cast<const MusECore::AudioTrack*>(*it);
       // Do not include hidden tracks.
@@ -887,6 +888,7 @@ CItem* PartCanvas::newItem(const QPoint& pos, int key_modifiers)
             case MusECore::Track::AUDIO_GROUP:
             case MusECore::Track::AUDIO_AUX:
             case MusECore::Track::AUDIO_SOFTSYNTH:
+            case MusECore::Track::FOLDER:
                   return nullptr;
             }
       pa->setName(track->name());
@@ -948,6 +950,7 @@ void PartCanvas::newItem(CItem* i, bool noSnap)
                 case MusECore::Track::AUDIO_GROUP:
                 case MusECore::Track::AUDIO_AUX:
                 case MusECore::Track::AUDIO_SOFTSYNTH:
+                case MusECore::Track::FOLDER:
                       break;
           }
           if(new_part)
@@ -1108,6 +1111,7 @@ QMenu* PartCanvas::genItemPopup(CItem* item)
             case MusECore::Track::AUDIO_GROUP:
             case MusECore::Track::AUDIO_AUX:
             case MusECore::Track::AUDIO_SOFTSYNTH:
+            case MusECore::Track::FOLDER:
                   break;
             }
 
@@ -2060,7 +2064,7 @@ bool PartCanvas::selectLasso(bool toggle, MusECore::Undo* undo)
       bool changed = false;
 
       for (MusECore::ciTrack it = tracks->cbegin(); it != tracks->cend(); ++it) {
-        if((*it)->isMidiTrack())
+        if(!(*it)->isAudioTrack())
           continue;
         MusECore::AudioTrack* track = static_cast<MusECore::AudioTrack*>(*it);
           // Do not include hidden tracks.
@@ -2730,6 +2734,7 @@ void PartCanvas::keyPress(QKeyEvent* event)
                   case MusECore::Track::AUDIO_GROUP:
                   case MusECore::Track::AUDIO_AUX:
                   case MusECore::Track::AUDIO_SOFTSYNTH: //TODO
+                  case MusECore::Track::FOLDER:
                         break;
                   }
             emit startEditor(pl, type);
@@ -4686,7 +4691,7 @@ bool PartCanvas::copyAudioAutomation(
 {
   bool haveData = false;
   for (MusECore::ciTrack it = tracks->cbegin(); it != tracks->cend(); ++it) {
-    if((*it)->isMidiTrack())
+    if(!(*it)->isAudioTrack())
       continue;
     MusECore::AudioTrack* track = static_cast<MusECore::AudioTrack*>(*it);
     // Do not include hidden tracks.
@@ -5189,7 +5194,17 @@ void PartCanvas::drawCanvas(QPainter& p, const QRect& mr, const QRegion& mrg)
               }
             }
             
-            if (!track->isMidiTrack() && (track->type() != MusECore::Track::WAVE)) {
+            // A folder has no parts: Mark its lane, so that the tracks of the folder are easy to tell.
+            if (track->isFolderTrack()) {
+                  p.fillRect(mx0_lim, myy, mx_2 - mx0_lim + 1, mth, QColor(100, 100, 100, 110));
+                  if (myy_2 >= my && myy_2 < my_2) {
+                        pen.setColor(MusEGlobal::config.partCanvasCoarseRasterColor);
+                        p.setPen(pen);
+                        p.drawLine(mx0_lim, myy_2, mx_2, myy_2);
+                  }
+            }
+
+            if (track->isAudioTrack() && (track->type() != MusECore::Track::WAVE)) {
                   drawAudioTrack(p, mr, mrg, vbbox, (MusECore::AudioTrack*)track);
             }
             myy += mth;
@@ -5224,7 +5239,7 @@ void PartCanvas::drawTopItem(QPainter& p, const QRect& mr, const QRegion&)
           th = track->height();
           if (!th)
             continue;
-          if (!track->isMidiTrack()) { // draw automation
+          if (track->isAudioTrack()) { // draw automation
                 QRect r(mx, yy, mw, th);
                 if(r.intersects(mr))
                 {
@@ -6506,7 +6521,7 @@ bool checkIfNearPoint(int mouseX, int mouseY, int eventX, int eventY, int circum
 void PartCanvas::checkAutomation(const QPoint &pointer)
 {
   MusECore::Track * t = y2Track(pointer.y());
-  if (t && !t->isMidiTrack()) {
+  if (t && t->isAudioTrack()) {
 
     int mouseY;
     const int top = t->y() + _automationTopMargin;
@@ -6776,7 +6791,7 @@ void PartCanvas::controllerChanged(
   //--------------------------------------------------------------
   const MusECore::AudioTrack* at = nullptr;
   const MusECore::CtrlList* track_cl = nullptr;
-  if(type == MusECore::CtrlGUIMessage::ADDED && trackExists && !t->isMidiTrack())
+  if(type == MusECore::CtrlGUIMessage::ADDED && trackExists && t->isAudioTrack())
   {
     at = static_cast<const MusECore::AudioTrack*>(t);
     MusECore::ciCtrlList icl = at->controller()->find(ctrlId);
@@ -6930,7 +6945,7 @@ bool PartCanvas::getMovementRange(
 void PartCanvas::unselectAllAutomation(MusECore::Undo& undo) const
 {
   for (MusECore::ciTrack it = tracks->cbegin(); it != tracks->cend(); ++it) {
-    if((*it)->isMidiTrack())
+    if(!(*it)->isAudioTrack())
       continue;
     // Include all tracks.
     MusECore::AudioTrack* track = static_cast<MusECore::AudioTrack*>(*it);
@@ -6985,7 +7000,7 @@ void PartCanvas::alignSelectedAutomation(MusECore::Undo& undo) const
       iatm != automation.currentCtrlFrameList.cend(); ++iatm)
   {
     const MusECore::Track* track = iatm->first;
-    if(track->isMidiTrack())
+    if(!track->isAudioTrack())
       continue;
     const MusECore::AudioTrack* at = static_cast<const MusECore::AudioTrack*>(track);
     const MusECore::AudioAutomationItemMap& atm = iatm->second;
@@ -7025,7 +7040,7 @@ void PartCanvas::setSelectedAutomationMode(MusECore::Undo& undo, MusECore::CtrlL
       iatm != automation.currentCtrlFrameList.cend(); ++iatm)
   {
     const MusECore::Track* track = iatm->first;
-    if(track->isMidiTrack())
+    if(!track->isAudioTrack())
       continue;
     const MusECore::AudioTrack* at = static_cast<const MusECore::AudioTrack*>(track);
     const MusECore::AudioAutomationItemMap& atm = iatm->second;
@@ -7090,7 +7105,7 @@ void PartCanvas::haveSelectedAutomationMode(bool* canDiscrete, bool* canInterpol
       iatm != automation.currentCtrlFrameList.cend(); ++iatm)
   {
     const MusECore::Track* track = iatm->first;
-    if(track->isMidiTrack())
+    if(!track->isAudioTrack())
       continue;
     const MusECore::AudioTrack* at = static_cast<const MusECore::AudioTrack*>(track);
     const MusECore::AudioAutomationItemMap& atm = iatm->second;
@@ -7431,7 +7446,7 @@ void PartCanvas::moveItems(const QPoint& inPos, int dir, bool rasterize)
   for(MusECore::iAudioAutomationItemTrackMap iatm = automation.currentCtrlFrameList.begin(); iatm != automation.currentCtrlFrameList.end(); ++iatm)
   {
     const MusECore::Track* track = iatm->first;
-    if(track->isMidiTrack())
+    if(!track->isAudioTrack())
       continue;
     const MusECore::AudioTrack* at = static_cast<const MusECore::AudioTrack*>(track);
     MusECore::AudioAutomationItemMap& atm = iatm->second;
@@ -7663,7 +7678,7 @@ void PartCanvas::tagItems(MusECore::TagEventList* tag_list, const MusECore::Even
   const unsigned int p1frame = p1.frame();
 
   for (MusECore::ciTrack it = tracks->cbegin(); it != tracks->cend(); ++it) {
-    if((*it)->isMidiTrack())
+    if(!(*it)->isAudioTrack())
       continue;
     MusECore::AudioTrack* track = static_cast<MusECore::AudioTrack*>(*it);
       // Do not include hidden tracks.

@@ -189,6 +189,7 @@ QIcon* trackInputSVGIcon;
 QIcon* trackOutputSVGIcon;
 QIcon* trackAuxSVGIcon;
 QIcon* trackGroupVGIcon;
+QIcon* trackFolderSVGIcon;
 
 // tool icons
 QIcon* pencilIconSVG;
@@ -574,6 +575,7 @@ void initIcons(int cursorSize, const QString& gpath, const QString& upath)
     trackOutputSVGIcon = icons.getSVG("track_output.svg");
     trackAuxSVGIcon    = icons.getSVG("track_aux.svg");
     trackGroupVGIcon   = icons.getSVG("track_group.svg");
+    trackFolderSVGIcon = icons.getSVG("track_folder.svg");
 
     synthGuiSVGIcon    = icons.getSVG("synth_gui.svg");
     ankerSVGIcon       = icons.getSVG("anker.svg");
@@ -905,6 +907,7 @@ void deleteIcons()
     delete trackOutputSVGIcon;
     delete trackAuxSVGIcon;
     delete trackGroupVGIcon;
+    delete trackFolderSVGIcon;
 
     delete routeAutoAdjustSVGIcon;
     delete routeSelSourceSVGIcon;

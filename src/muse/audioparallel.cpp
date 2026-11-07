@@ -118,7 +118,7 @@ std::atomic<int> stChain { 0 };
 // Tracks that take part. The outputs are left to the audio thread, they write to the driver.
 inline bool participates(Track* t)
 {
-  return t && !t->isMidiTrack() && t->type() != Track::AUDIO_OUTPUT;
+  return t && t->isAudioTrack() && t->type() != Track::AUDIO_OUTPUT;
 }
 
 //---------------------------------------------------------

@@ -420,6 +420,9 @@ bool AudioMixerApp::stripIsVisible(Strip* s)
       if (!cfg->showMidiTracks)
         return false;
       break;
+    // A folder has no strip.
+    case MusECore::Track::FOLDER:
+      return false;
 
   }
   return true;
@@ -969,6 +972,9 @@ void AudioMixerApp::setSizing()
 void AudioMixerApp::addStrip(const MusECore::Track* t, const MusEGlobal::StripConfig& sc, int insert_pos)
 {
     DEBUG_MIXER(stderr, "addStrip\n");
+    // Tracks that are not midi or audio (folders) have no strip.
+    if (!t->isMidiTrack() && !t->isAudioTrack())
+        return;
     Strip* strip;
 
     // Make them non-embedded: Moveable, hideable, and with an expander handle.
@@ -1170,6 +1176,9 @@ bool AudioMixerApp::updateStripList()
   // check for new tracks
   for (MusECore::ciTrack tli = tl->cbegin(); tli != tl->end();++tli) {
     const MusECore::Track* track = *tli;
+    // Tracks that are not midi or audio (folders) have no strip.
+    if (!track->isMidiTrack() && !track->isAudioTrack())
+      continue;
     const QUuid uuid = track->uuid();
     StripList::const_iterator si = stripList.cbegin();
     for (; si != stripList.cend(); ++si) {

@@ -228,7 +228,7 @@ void report()
 
   const TrackList* tl = MusEGlobal::song->tracks();
   for(ciTrack it = tl->begin(); it != tl->end(); ++it)
-    if(!(*it)->isMidiTrack())
+    if((*it)->isAudioTrack())
       add(static_cast<AudioTrack*>(*it));
 
   // The edges, from the routes into a track and, for an aux track, from the tracks that send to it.
@@ -240,14 +240,14 @@ void report()
     const RouteList* rl = t->inRoutes();
     for(ciRoute ir = rl->begin(); ir != rl->end(); ++ir)
     {
-      if(ir->type != Route::TRACK_ROUTE || !ir->track || ir->track->isMidiTrack())
+      if(ir->type != Route::TRACK_ROUTE || !ir->track || !ir->track->isAudioTrack())
         continue;
       deps.insert(add(static_cast<AudioTrack*>(ir->track)));
     }
     if(t->type() == Track::AUDIO_AUX)
       for(ciTrack it = tl->begin(); it != tl->end(); ++it)
       {
-        if((*it)->isMidiTrack())
+        if(!(*it)->isAudioTrack())
           continue;
         AudioTrack* s = static_cast<AudioTrack*>(*it);
         if(s->hasAuxSend() && !s->auxRefCount())

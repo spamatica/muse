@@ -29,6 +29,7 @@
 #include <QString>
 
 #include "ctrl.h"
+#include <vector>
 #include "event.h"
 #include "route.h"
 #include "sig.h"
@@ -42,6 +43,7 @@ class Marker;
 class MidiPort;
 class MidiInstrument;
 class Track;
+class FolderTrack;
 class Part;
 class PluginConfiguration;
 class PluginI;
@@ -65,7 +67,7 @@ struct UndoOp {
             AddTempo, DeleteTempo, ModifyTempo, SetTempo, SetStaticTempo, SetGlobalTempo, EnableMasterTrack,
             AddSig,   DeleteSig,   ModifySig,
             AddKey,   DeleteKey,   ModifyKey,
-            ModifyTrackName, ModifyTrackChannel,
+            ModifyTrackName, ModifyTrackChannel, ModifyTrackFolder, ReorderTracks,
             SetTrackRecord, SetTrackMute, SetTrackSolo, SetTrackRecMonitor, SetTrackOff,
             MoveTrack,
             ModifyClip,
@@ -206,6 +208,16 @@ struct UndoOp {
                   QString* _newName;
                 };
             struct {
+                  // For ModifyTrackFolder. Null means not in a folder.
+                  FolderTrack* _oldFolder;
+                  FolderTrack* _newFolder;
+                };
+            struct {
+                  // For ReorderTracks. The other order of the track list, swapped with it each time the operation
+                  //  is executed or reverted. Owned by the operation.
+                  std::vector<Track*>* _trackOrder;
+                };
+            struct {
                   int trackno;
                 };
             struct {
@@ -246,6 +258,11 @@ struct UndoOp {
       UndoOp(UndoType type, int a, int b, int c=0, bool noUndo = false);
       UndoOp(UndoType type, int n, const Track* track, bool noUndo = false);
       UndoOp(UndoType type, const Part* part, bool noUndo = false);
+      // For ModifyTrackFolder: Puts the track in a folder, or out of the folders if new_folder is null.
+      UndoOp(UndoType type, const Track* track, FolderTrack* old_folder, FolderTrack* new_folder, bool noUndo = false);
+      // For ReorderTracks: Gives the track list the order in the vector. The operation takes the vector, which then
+      //  holds the previous order (and so on, each execute or revert swaps).
+      UndoOp(UndoType type, std::vector<Track*>* new_order, bool noUndo = false);
       UndoOp(UndoType type, const Part* part, const QString& old_name, const QString& new_name, bool noUndo = false);
       // For ModifyPartVolume. The values are linear gain. The arguments are in this order to avoid
       //  ambiguity with the other constructors that take a part and two numbers.

@@ -138,6 +138,7 @@
         <file>svg/key.svg</file>
         <file>svg/track_aux.svg</file>
         <file>svg/track_group.svg</file>
+        <file>svg/track_folder.svg</file>
         <file>svg/track_output.svg</file>
         <file>svg/track_input.svg</file>
         <file>svg/synth.svg</file>

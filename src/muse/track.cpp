@@ -60,7 +60,7 @@ int Track::_selectionOrderCounter = 0;
 
 const char* Track::_cname[] = {
       "Midi", "Drum", "Wave",
-      "AudioOut", "AudioIn", "AudioGroup", "AudioAux", "AudioSynth"
+      "AudioOut", "AudioIn", "AudioGroup", "AudioAux", "AudioSynth", "Folder"
       };
 
 
@@ -260,10 +260,78 @@ void removePortCtrlEvents(MidiTrack* t, bool drum_ctls, bool non_drum_ctls)
 }
 
 //---------------------------------------------------------
+//   FolderTrack
+//---------------------------------------------------------
+
+FolderTrack::FolderTrack() : Track(Track::FOLDER, 0)
+{
+  _folded = false;
+}
+
+FolderTrack::FolderTrack(const FolderTrack& t, int flags) : Track(t, flags)
+{
+  _folded = t._folded;
+}
+
+void FolderTrack::assign(const Track& t, int flags)
+{
+  Track::assign(t, flags);
+  if(t.type() == Track::FOLDER && (flags & ASSIGN_PROPERTIES))
+    _folded = static_cast<const FolderTrack&>(t)._folded;
+}
+
+int FolderTrack::height() const
+{
+  return _height;
+}
+
+void FolderTrack::write(int level, Xml& xml, XmlWriteStatistics*) const
+{
+  xml.tag(level++, "FolderTrack");
+  Track::writeProperties(level, xml);
+  xml.intTag(level, "folded", _folded);
+  xml.etag(--level, "FolderTrack");
+}
+
+void FolderTrack::read(Xml& xml, XmlReadStatistics*)
+{
+  for(;;)
+  {
+    Xml::Token token = xml.parse();
+    const QString& tag = xml.s1();
+    switch(token)
+    {
+      case Xml::Error:
+      case Xml::End:
+        return;
+      case Xml::TagStart:
+        if(tag == "Track")
+          Track::read(xml);
+        else if(tag == "folded")
+          _folded = xml.parseInt();
+        else
+          xml.unknown("FolderTrack");
+      break;
+      case Xml::Attribut:
+      break;
+      case Xml::TagEnd:
+        if(tag == "FolderTrack")
+          return;
+      default:
+      break;
+    }
+  }
+}
+
+//---------------------------------------------------------
 //   isVisible
 //---------------------------------------------------------
 bool Track::isVisible() const
 {
+  // Hidden by being in a folded folder.
+  if(_folder && _folder->folded())
+    return false;
+
   switch (type())
   {
     case Track::AUDIO_AUX:
@@ -281,6 +349,8 @@ bool Track::isVisible() const
         return MidiTrack::visible();
     case Track::AUDIO_SOFTSYNTH:
         return SynthI::visible();
+    case Track::FOLDER:
+        return true;
   default:
     break;
   }
@@ -329,6 +399,7 @@ void Track::init(int channels)
       _height        = MusEGlobal::config.trackHeight;
       _locked        = false;
       _recMonitor    = false;
+      _folder        = nullptr;
       for (int i = 0; i < MusECore::MAX_CHANNELS; ++i) {
             _meter[i] = 0.0;
             _peak[i]  = 0.0;
@@ -423,6 +494,9 @@ void Track::internal_assign(const Track& t, int flags)
         _comment      = t.comment();
         _locked       = t.locked();
         _recMonitor   = t._recMonitor;
+
+        // A copy of a track stays in the folder.
+        _folder       = t._folder;
       }
 }
 
@@ -479,6 +553,8 @@ QIcon* Track::trackTypeIcon(TrackType type)
               return MusEGui::trackAuxSVGIcon;
         case MusECore::Track::AUDIO_SOFTSYNTH:
               return MusEGui::synthSVGIcon;
+        case MusECore::Track::FOLDER:
+              return MusEGui::trackFolderSVGIcon;
         }
   return nullptr;
 }
@@ -507,6 +583,8 @@ QColor Track::trackTypeColor(TrackType type)
               return MusEGlobal::config.auxTrackBg;
         case MusECore::Track::AUDIO_SOFTSYNTH:
               return MusEGlobal::config.synthTrackBg;
+        case MusECore::Track::FOLDER:
+              return QColor(120, 120, 120);
         default:
               break;
         }
@@ -537,6 +615,8 @@ QColor Track::trackTypeLabelColor(TrackType type)
               return MusEGlobal::config.auxTrackLabelBg;
         case MusECore::Track::AUDIO_SOFTSYNTH:
               return MusEGlobal::config.synthTrackLabelBg;
+        case MusECore::Track::FOLDER:
+              return QColor(120, 120, 120);
         default:
               break;
         }
@@ -1070,7 +1150,7 @@ void MidiTrack::update_drum_in_map()
 //---------------------------------------------------------
 int MidiTrack::height() const
 {
-  if (_isVisible)
+  if (isVisible())
     return _height;
   return 0;
 }
@@ -2372,6 +2452,8 @@ void Track::writeProperties(int level, Xml& xml) const
       }
       if (m_color.isValid())
           xml.strTag(level, "color", m_color.name());
+      if (_folder)
+          xml.strTag(level, "folder", _folder->name());
 
       // Write only the assignments for this track.
       // Exclude any rack plugin controller assignments, they are written by the plugins.
@@ -2392,6 +2474,8 @@ bool Track::readProperties(Xml& xml, const QString& tag)
             _name = xml.parse1();
       else if (tag == "comment")
             _comment = xml.parse1();
+      else if (tag == "folder")
+            _folderNameRead = xml.parse1();
       else if (tag == "record") {
             bool recordFlag = xml.parseInt();
             if (type() == TrackType::AUDIO_OUTPUT)

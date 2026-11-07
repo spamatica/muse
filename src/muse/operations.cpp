@@ -159,6 +159,8 @@ unsigned int PendingOperationItem::getIndex() const
     case DeleteTrack:
     case MoveTrack:
     case ModifyTrackName:
+    case ModifyTrackFolder:
+    case SetTrackOrder:
     case ModifyTrackDrumMapItem:
     case ReplaceTrackDrumMapPatchList:
     case RemapDrumControllers:
@@ -1049,6 +1051,19 @@ SongChangedStruct_t PendingOperationItem::executeRTStage()
         flags |= SC_AUX;
     break;
     
+    case SetTrackOrder:
+      DEBUG_OPERATIONS(stderr, "PendingOperationItem::executeRTStage SetTrackOrder track_list:%p\n", _track_list);
+      // No allocation, only pointers move.
+      static_cast<std::vector<Track*>&>(*_track_list).swap(*_track_order);
+      flags |= SC_TRACK_MOVED;
+    break;
+
+    case ModifyTrackFolder:
+      DEBUG_OPERATIONS(stderr, "PendingOperationItem::executeRTStage ModifyTrackFolder track:%p folder:%p\n", _track, _srcTrack);
+      _track->setFolder(static_cast<FolderTrack*>(_srcTrack));
+      flags |= (SC_TRACK_MODIFIED | SC_TRACK_RESIZED | SC_TRACK_SELECTION);
+    break;
+    
     case SetTrackRecord:
     {
       DEBUG_OPERATIONS(stderr, "PendingOperationItem::executeRTStage SetTrackRecord track:%p new_val:%d\n", _track, _boolA);
@@ -1529,7 +1544,7 @@ SongChangedStruct_t PendingOperationItem::executeRTStage()
       for (iTrack it = tl->begin(); it != tl->end(); ++it)
       {
         Track* t = *it;
-        if(t->isMidiTrack())
+        if(!t->isAudioTrack())
           continue;
         AudioTrack *at = static_cast<AudioTrack*>(t);
         // Re-enable all track and plugin controllers, and synth controllers if applicable.
@@ -1676,7 +1691,7 @@ SongChangedStruct_t PendingOperationItem::executeRTStage()
               _track, _pluginI, _rackEffectPos);
       // NOTE: Caller is responsible for dealing with any existing plugin at the position, if desired.
       //       Otherwise we delete it, below.
-      if(_track && !_track->isMidiTrack())
+      if(_track && _track->isAudioTrack())
       {
         AudioTrack *at = static_cast<AudioTrack*>(_track);
         Pipeline *pl = at->efxPipe();
@@ -1705,7 +1720,7 @@ SongChangedStruct_t PendingOperationItem::executeRTStage()
     {
       DEBUG_OPERATIONS(stderr, "PendingOperationItem::executeRTStage SwapRackEffectPlugins: track:%p rackPos:%d newRackPos:%d\n",
               _track, _rackEffectPos, _newRackEffectPos);
-      if(_track && !_track->isMidiTrack())
+      if(_track && _track->isAudioTrack())
       {
         AudioTrack *at = static_cast<AudioTrack*>(_track);
         Pipeline *pl = at->efxPipe();
@@ -1731,7 +1746,7 @@ SongChangedStruct_t PendingOperationItem::executeRTStage()
       DEBUG_OPERATIONS(stderr,
         "PendingOperationItem::executeRTStage MoveRackEffectPlugin: srcTrack:%p dstTrack:%p srcRackPos:%d dstRackPos:%d\n",
         _srcTrack, _track, _rackEffectPos, _newRackEffectPos);
-      if(_srcTrack && _track && !_srcTrack->isMidiTrack() && !_track->isMidiTrack())
+      if(_srcTrack && _track && _srcTrack->isAudioTrack() && _track->isAudioTrack())
       {
         AudioTrack *sat = static_cast<AudioTrack*>(_srcTrack);
         AudioTrack *dat = static_cast<AudioTrack*>(_track);
@@ -1914,7 +1929,7 @@ SongChangedStruct_t PendingOperationItem::executeNonRTStage()
       for (iTrack it = tl->begin(); it != tl->end(); ++it)
       {
         Track* t = *it;
-        if(t->isMidiTrack())
+        if(!t->isAudioTrack())
           continue;
         AudioTrack *at = static_cast<AudioTrack*>(t);
         at->controller()->updateGroups();

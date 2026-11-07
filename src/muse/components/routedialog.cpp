@@ -234,6 +234,9 @@ bool RouteTreeWidgetItem::setChannels()
               case MusECore::Track::AUDIO_GROUP:
                 chans = _isInput ? rcaps._trackChannels._outChannels : rcaps._trackChannels._inChannels;
               break;
+              // A folder has no routes.
+              case MusECore::Track::FOLDER:
+              break;
             }
             
             if(chans != _channels.size())
@@ -3260,6 +3263,9 @@ void RouteDialog::addItems()
         dst_chans = rcaps._trackChannels._inChannels;
         src_routable = rcaps._trackChannels._outRoutable;
         dst_routable = rcaps._trackChannels._inRoutable;
+      break;
+      // A folder has no routes.
+      case MusECore::Track::FOLDER:
       break;
     }
   

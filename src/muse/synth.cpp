@@ -522,7 +522,7 @@ SynthI::~SynthI()
 //---------------------------------------------------------
 int SynthI::height() const
 {
-  if (_isVisible)
+  if (isVisible())
     return _height;
   return 0;
 }

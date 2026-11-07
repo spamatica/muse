@@ -97,6 +97,19 @@ using MusECore::UndoOp;
 namespace MusEGui {
 
 static const int MIN_TRACKHEIGHT = 20;
+
+// Tracks in a folder: The width of the strip along the left edge, and how far the name is moved in.
+static const int FOLDER_STRIP_WIDTH = 6;
+static const int FOLDER_INSET = 10;
+// Menu action ids of the folders to move tracks to: This plus the index of the folder in the track list.
+static const int FOLDER_MENU_BASE = 3000;
+
+// The fold arrow of a folder, in the name column. The rect is that of the name column of the folder's row.
+static QRect folderArrowRect(const QRect& nameRect)
+{
+    const int sz = 12;
+    return QRect(nameRect.left(), nameRect.top() + (nameRect.height() - sz) / 2, sz, sz);
+}
 QColor collist[] = { Qt::red, Qt::yellow, Qt::blue , Qt::black, Qt::white, Qt::green };
 QString colnames[] = { "Red", "Yellow", "Blue", "Black", "White", "Green"};
 
@@ -365,6 +378,15 @@ void TList::paint(const QRect& r)
             p.restore();
         }
 
+        // Tracks in a folder are marked with a strip of the folder's colour along the left edge.
+        if (track->folder()) {
+            p.save();
+            p.fillRect(x1, yy, FOLDER_STRIP_WIDTH, trackHeight, track->folder()->color());
+            p.setPen(MusEGlobal::config.trackSectionDividerColor);
+            p.drawLine(x1 + FOLDER_STRIP_WIDTH, yy, x1 + FOLDER_STRIP_WIDTH, yy + trackHeight);
+            p.restore();
+        }
+
         int x = -1; // compensate for the buggy QHeaderView, would even have to be -2 for perfect alignment
         for (int index = 0; index < header->count(); ++index) {
             int section = header->logicalIndex(index);
@@ -378,7 +400,11 @@ void TList::paint(const QRect& r)
 
             if(!header->isSectionHidden(section))
             {
-                switch (section) {
+                // A folder only has an index, an icon and a name.
+                const int paintSection =
+                    (track->isFolderTrack() && section != COL_TRACK_IDX && section != COL_CLASS && section != COL_NAME) ?
+                        -1 : section;
+                switch (paintSection) {
                 case COL_TRACK_IDX:
                     if (track->selected())
                         p.setFont(fbd);
@@ -440,11 +466,34 @@ void TList::paint(const QRect& r)
 //                    break;
 
                 case COL_NAME:
+                {
                     if (track->selected())
                         p.setFont(fbd);
-                    p.drawText(r, Qt::AlignVCenter|Qt::AlignLeft, track->name());
+                    QRect nr = r;
+                    // Tracks in a folder are inset.
+                    if (track->folder())
+                        nr.adjust(FOLDER_INSET, 0, 0, 0);
+                    if (track->isFolderTrack())
+                    {
+                        // The fold arrow: Points right when folded and down when unfolded.
+                        const QRect ar = folderArrowRect(r);
+                        const int ax = ar.left() + 2, ay = ar.top() + 2, as = ar.width() - 4;
+                        QPolygon tri;
+                        if (static_cast<MusECore::FolderTrack*>(track)->folded())
+                            tri << QPoint(ax, ay) << QPoint(ax + as * 3 / 4, ay + as / 2) << QPoint(ax, ay + as);
+                        else
+                            tri << QPoint(ax, ay + as / 4) << QPoint(ax + as, ay + as / 4) << QPoint(ax + as / 2, ay + as);
+                        p.save();
+                        p.setBrush(QBrush(MusECore::isColorBright(track->selected() ? bg : track->color()) ? Qt::black : Qt::white));
+                        p.setPen(Qt::NoPen);
+                        p.drawPolygon(tri);
+                        p.restore();
+                        nr.setLeft(ar.right() + 4);
+                    }
+                    p.drawText(nr, Qt::AlignVCenter|Qt::AlignLeft, track->name());
                     if (p.font().bold())
                         p.setFont(font());
+                }
                     break;
 
                 case COL_OCHANNEL:
@@ -498,7 +547,7 @@ void TList::paint(const QRect& r)
                 case COL_AUTOMATION:
                 {
                     QString s;
-                    if (!track->isMidiTrack()) {
+                    if (track->isAudioTrack()) {
                         const MusECore::CtrlListList* cll = ((MusECore::AudioTrack*)track)->controller();
                         int countAll=0, countVisible=0;
                         const int colSqSz = 12;
@@ -559,7 +608,7 @@ void TList::paint(const QRect& r)
                     break;
 
                 case COL_FREEZE:
-                    if (!track->isMidiTrack() && static_cast<MusECore::AudioTrack*>(track)->canFreeze())
+                    if (track->isAudioTrack() && static_cast<MusECore::AudioTrack*>(track)->canFreeze())
                     {
                         const MusECore::AudioTrack* at = static_cast<const MusECore::AudioTrack*>(track);
                         (at->frozen() || at->freezeCapturing() ? freezeOnSVGIcon : freezeOffSVGIcon)->
@@ -644,6 +693,14 @@ void TList::paint(const QRect& r)
         p.setPen(Qt::green);
         p.drawLine(x1, yy, x2, yy);
         p.drawLine(x1, yy + dragHeight, x2, yy+dragHeight);
+
+        // Dropped on a folder, the track goes in it: Mark the folder.
+        const MusECore::Track* dragged = (sTrack >= 0 && sTrack < int(l->size())) ? l->index(sTrack) : nullptr;
+        const MusECore::Track* target = y2Track(curY + ypos);
+        if (dragged && target && target != dragged && target->isFolderTrack() && !dragged->isFolderTrack()) {
+            p.setPen(QPen(Qt::yellow, 2));
+            p.drawRect(x1 + 1, target->y() - ypos + 1, x2 - x1 - 2, target->height() - 2);
+        }
     }
 
     //---------------------------------------------------
@@ -1114,7 +1171,7 @@ void TList::setTrackChannel(MusECore::Track *track, bool isDelta, int channel, i
             {
                 for(const auto& t : *MusEGlobal::song->tracks())
                 {
-                    if(t->isMidiTrack())
+                    if(!t->isAudioTrack())
                         continue;
                     if (doAllTracks && (t->type() != track->type()))
                         continue; // only tracks of the same type
@@ -1178,6 +1235,32 @@ void TList::mouseDoubleClickEvent(QMouseEvent* ev)
     }
 
     const bool shift = ((QInputEvent*)ev)->modifiers() & Qt::ShiftModifier;
+
+    // A double click on a folder folds or unfolds it, except on the name, which edits it.
+    // (A click on the fold arrow has already folded or unfolded it, leave that alone.)
+    if (t->isFolderTrack())
+    {
+        // The same rect as when painting (see paint()).
+        const QRect nameRect(header->sectionViewportPosition(COL_NAME) + 1, t->y() - ypos,
+                             header->sectionSize(COL_NAME) - 4, t->height());
+        const QRect arrowRect = folderArrowRect(nameRect);
+        if (section == COL_NAME && arrowRect.adjusted(-2, -2, 2, 2).contains(ev->pos()))
+        {
+            ev->accept();
+            return;
+        }
+        QFont nameFont(font());
+        if (t->selected())
+            nameFont.setBold(true);
+        const QRect textRect(arrowRect.right() + 4, nameRect.top(),
+                             QFontMetrics(nameFont).horizontalAdvance(t->name()), nameRect.height());
+        if (section == COL_NAME && textRect.contains(ev->pos()))
+            editTrackName(t);
+        else
+            toggleFolderFolded(static_cast<MusECore::FolderTrack*>(t));
+        ev->accept();
+        return;
+    }
 
     int colx = header->sectionPosition(section);
     int colw = header->sectionSize(section);
@@ -2089,6 +2172,25 @@ void TList::mousePressEvent(QMouseEvent* ev)
     mode = NORMAL;
     TrackColumn col = TrackColumn(header->logicalIndexAt(x));
 
+    if (t->isFolderTrack())
+    {
+        // Click on the fold arrow.
+        if (button == Qt::LeftButton && col == COL_NAME && !ctrl && !shift)
+        {
+            // The same rect as when painting (see paint()).
+            const QRect nameRect(header->sectionViewportPosition(COL_NAME) + 1, t->y() - ypos,
+                                 header->sectionSize(COL_NAME) - 4, t->height());
+            if (folderArrowRect(nameRect).adjusted(-2, -2, 2, 2).contains(ev->pos()))
+            {
+                toggleFolderFolded(static_cast<MusECore::FolderTrack*>(t));
+                return;
+            }
+        }
+        // The other columns do nothing for a folder. Treat a click there like one on the name.
+        if (col != COL_TRACK_IDX && col != COL_CLASS)
+            col = COL_NAME;
+    }
+
     // A plain left click on the automation column selects the track and then also opens the automation menu.
     const bool automationLeftClick = button == Qt::LeftButton && col == COL_AUTOMATION && !ctrl && !shift;
 
@@ -2200,7 +2302,7 @@ void TList::mousePressEvent(QMouseEvent* ev)
         case COL_AUTOMATION:
         {
             // Left click opens the menu too, unless it is a ctrl/shift track selection click.
-            if (!t->isMidiTrack() &&
+            if (t->isAudioTrack() &&
                 (button == Qt::RightButton || (button == Qt::LeftButton && !ctrl && !shift))) {
                 editAutomation = t;
                 PopupMenu* p = new PopupMenu(true);
@@ -2494,7 +2596,7 @@ void TList::mousePressEvent(QMouseEvent* ev)
         case COL_FREEZE:
         {
             // Freeze or unfreeze a wave or synth track.
-            if (button == Qt::LeftButton && !t->isMidiTrack())
+            if (button == Qt::LeftButton && t->isAudioTrack())
             {
                 MusECore::AudioTrack* at = static_cast<MusECore::AudioTrack*>(t);
                 if (at->frozen())
@@ -2561,10 +2663,23 @@ void TList::mousePressEvent(QMouseEvent* ev)
                 int selCnt = MusEGlobal::song->countSelectedTracks();
 
                 QAction *a;
-                a = p->addAction(*duplSelTrackSVGIcon, tr("Duplicate Track"));
-                a->setData(1005);
-                a = p->addAction(*minusSVGIcon, tr("Delete Track"));
-                a->setData(1001);
+                // Folders can not be duplicated (for now). They can only be deleted when empty.
+                if (!t->isFolderTrack())
+                {
+                    a = p->addAction(*duplSelTrackSVGIcon, tr("Duplicate Track"));
+                    a->setData(1005);
+                    a = p->addAction(*minusSVGIcon, tr("Delete Track"));
+                    a->setData(1001);
+                }
+                else
+                {
+                    MusECore::FolderTrack* ft = static_cast<MusECore::FolderTrack*>(t);
+                    a = p->addAction(ft->folded() ? tr("Unfold Folder") : tr("Fold Folder"));
+                    a->setData(1040);
+                    a = p->addAction(*minusSVGIcon, tr("Delete Folder"));
+                    a->setData(1001);
+                    a->setEnabled(!MusEGlobal::song->folderHasTracks(ft));
+                }
 
                 if (selCnt > 0){
                     p->addSeparator();
@@ -2590,7 +2705,35 @@ void TList::mousePressEvent(QMouseEvent* ev)
                     a->setShortcut(shortcuts[SHRT_MOVEBOTTOM_TRACK].key);
                 }
 
-                if(!t->isMidiTrack())
+                // Put the track, or the selected tracks, in a folder.
+                if (!t->isFolderTrack())
+                {
+                    QMenu* fm = nullptr;
+                    int idx = 0;
+                    for (const auto& ft : *MusEGlobal::song->tracks())
+                    {
+                        if (ft->isFolderTrack() && ft != t->folder())
+                        {
+                            if (!fm)
+                            {
+                                p->addSeparator();
+                                fm = p->addMenu(tr("Move to Folder"));
+                            }
+                            a = fm->addAction(*trackFolderSVGIcon, ft->name());
+                            a->setData(FOLDER_MENU_BASE + idx);
+                        }
+                        ++idx;
+                    }
+                    if (t->folder())
+                    {
+                        if (!fm)
+                            p->addSeparator();
+                        a = p->addAction(tr("Remove from Folder"));
+                        a->setData(1041);
+                    }
+                }
+
+                if(t->isAudioTrack())
                 {
                     p->addSeparator();
                     a = p->addAction(tr("Process in the Audio Thread Only"));
@@ -2768,8 +2911,23 @@ void TList::mousePressEvent(QMouseEvent* ev)
                             copyTrackDrummap((MusECore::MidiTrack*)t, true);
                             break;
 
+                        case 1040:     // fold or unfold a folder
+                            toggleFolderFolded(static_cast<MusECore::FolderTrack*>(t));
+                            break;
+                        case 1041:     // take the track(s) out of the folder
+                            moveTracksToFolderInteractive(t, nullptr);
+                            break;
+
                         default:
-                            printf("action %d\n", n);
+                            if (n >= FOLDER_MENU_BASE)
+                            {
+                                // Move to the folder at this index in the track list.
+                                MusECore::Track* ft = MusEGlobal::song->tracks()->index(n - FOLDER_MENU_BASE);
+                                if (ft && ft->isFolderTrack())
+                                    moveTracksToFolderInteractive(t, static_cast<MusECore::FolderTrack*>(ft));
+                            }
+                            else
+                                printf("action %d\n", n);
                             break;
                         }
                     }
@@ -3292,16 +3450,50 @@ void TList::mouseMoveEvent(QMouseEvent* ev)
     }
 }
 
+//---------------------------------------------------------
+//   toggleFolderFolded
+//    Folds or unfolds a folder. The tracks of a folded folder are hidden, and hidden tracks are not selected.
+//---------------------------------------------------------
+
+void TList::toggleFolderFolded(MusECore::FolderTrack* folder)
+{
+    folder->setFolded(!folder->folded());
+    MusEGlobal::song->unselectHiddenTracks();
+    MusEGlobal::song->update(SC_TRACK_MODIFIED | SC_TRACK_RESIZED | SC_TRACK_SELECTION);
+    adjustScrollbar();
+}
+
+//---------------------------------------------------------
+//   moveTracksToFolderInteractive
+//    Moves the selected tracks to the folder, or only the given track if it is not selected.
+//---------------------------------------------------------
+
+void TList::moveTracksToFolderInteractive(MusECore::Track* track, MusECore::FolderTrack* folder)
+{
+    if (MusEGlobal::audio->isPlaying()) {
+        MusEGlobal::muse->setStatusBarText(tr("Operation not available while playing"), 5000);
+        return;
+    }
+    std::vector<MusECore::Track*> tracks;
+    if (track->selected()) {
+        for (const auto& t : *MusEGlobal::song->tracks())
+            if (t->selected())
+                tracks.push_back(t);
+    }
+    else
+        tracks.push_back(track);
+    MusEGlobal::song->moveTracksToFolder(tracks, folder);
+}
+
 void TList::moveSelectedTracks(bool up, bool full) {
 
     // Move only visible? But the other track functions also work on hidden tracks
     // (duplicate, delete...), so this seems more consistent (kybos)
+    // (Hidden tracks are not selected anyway, see Song::unselectHiddenTracks().)
 
     MusECore::TrackList *tracks = MusEGlobal::song->tracks();
 
-    if (tracks->size() < 2 || tracks->countSelected() == 0
-            || (!up && tracks->back()->selected())
-            || (up && tracks->front()->selected()))
+    if (tracks->size() < 2 || tracks->countSelected() == 0)
         return;
 
     if (MusEGlobal::audio->isPlaying()) {
@@ -3309,50 +3501,8 @@ void TList::moveSelectedTracks(bool up, bool full) {
         return;
     }
 
-    MusECore::TrackList tracksTmp = *tracks;
-
-    unsigned delta = 1;
-    bool deltaFound = false;
-
-    if (up) {
-        for (const auto it : *tracks) {
-            if (!it->selected())
-                continue;
-
-            if (full & !deltaFound) {
-                delta = static_cast<unsigned>(tracks->index(it));
-                deltaFound = true;
-            }
-
-            unsigned sidx = static_cast<unsigned>(tracks->index(it));
-            unsigned i = delta;
-            while (i--) {
-                std::swap(tracksTmp[sidx], tracksTmp[sidx-1]);
-                sidx--;
-            }
-        }
-    } else {
-        for (auto it = tracks->rbegin(); it != tracks->rend(); it++) {
-            if (!(*it)->selected())
-                continue;
-
-            unsigned sidx = static_cast<unsigned>(tracks->index(*it));
-
-            if (full && !deltaFound) {
-                delta = static_cast<unsigned>(tracks->size()) - sidx - 1;
-                deltaFound = true;
-            }
-
-            unsigned i = delta;
-            while (i--) {
-                std::swap(tracksTmp[sidx], tracksTmp[sidx+1]);
-                sidx++;
-            }
-        }
-    }
-
-    MusEGlobal::song->tracks()->swap(tracksTmp);
-    MusEGlobal::song->update(SC_TRACK_MOVED);
+    // The tracks of a folder move inside it, the others move with the folders as a whole.
+    MusEGlobal::song->moveSelectedTracks(up, full);
 }
 
 //---------------------------------------------------------
@@ -3374,13 +3524,9 @@ void TList::mouseReleaseEvent(QMouseEvent* ev)
 
     if (mode == DRAG) {
         if (t) {
-            int dTrack = MusEGlobal::song->tracks()->index(t);
-            if (sTrack >= 0 && dTrack >= 0)   // sanity check
-            {
-                const int tracks_sz = MusEGlobal::song->tracks()->size();
-                if (sTrack < tracks_sz && dTrack < tracks_sz)   // sanity check
-                    MusEGlobal::song->applyOperation(MusECore::UndoOp(MusECore::UndoOp::MoveTrack, sTrack, dTrack));
-            }
+            // The track goes to the place of the track dropped on, or into it if it is a folder.
+            if (sTrack >= 0 && sTrack < int(MusEGlobal::song->tracks()->size()))   // sanity check
+                MusEGlobal::song->dragMoveTrack(MusEGlobal::song->tracks()->index(sTrack), t);
 
             // inconsistent, better keep the original aux knob order?
             // - if aux track is moved in the mixer, the aux knobs are also NOT adjusted

@@ -1498,7 +1498,7 @@ void Audio::process1(unsigned samplePos, unsigned offset, unsigned frames)
       for(TrackList::size_type it = 0; it < tl_sz; ++it) 
       {
         atrack = static_cast<AudioTrack*>(tl[it]);
-        if(atrack->isMidiTrack())
+        if(!atrack->isAudioTrack())
           continue;
         if(!atrack->processed() && (atrack->type() != Track::AUDIO_OUTPUT))
         {

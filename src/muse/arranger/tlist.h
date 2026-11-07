@@ -191,6 +191,8 @@ class TList : public QWidget {
       QColor curSelBorderColor() const { return _curSelBorderColor; }
       void setCurSelBorderColor(const QColor c) { _curSelBorderColor = c; }
       void moveSelectedTracks(bool up, bool full);
+      void toggleFolderFolded(MusECore::FolderTrack*);
+      void moveTracksToFolderInteractive(MusECore::Track*, MusECore::FolderTrack*);
       void scrollToTrack(MusECore::Track* track);
       void adjustScrollbar();
 

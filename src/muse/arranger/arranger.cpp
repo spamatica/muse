@@ -1288,7 +1288,8 @@ void Arranger::updateTrackInfo(MusECore::SongChangedStruct_t /*flags*/)
             switchInfo(-1);
             return;
             }
-      if (selected == nullptr) {
+      // A folder has nothing to show.
+      if (selected == nullptr || selected->isFolderTrack()) {
             switchInfo(0);
             return;
             }
@@ -1402,6 +1403,10 @@ void Arranger::switchInfo(int n)
 void Arranger::trackInfoSongChange(MusECore::SongChangedStruct_t flags)
 {
   if(!selected || !showTrackinfoFlag)
+    return;
+
+  // A folder has nothing to update.
+  if(selected->isFolderTrack())
     return;
 
   // Only update what is showing.

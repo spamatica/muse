@@ -3006,7 +3006,7 @@ bool AudioAux::getData(unsigned pos, int ch, unsigned samples, float** data)
       AudioTrack* track;
       for(ciTrack it = tl->begin(); it != tl->end(); ++it)
       {
-        if((*it)->isMidiTrack())
+        if(!(*it)->isAudioTrack())
           continue;
         track = (AudioTrack*)(*it);
         // If there are any Aux route paths to the track, defer processing until the second main track processing pass.
@@ -3039,7 +3039,7 @@ bool AudioAux::getData(unsigned pos, int ch, unsigned samples, float** data)
       {
         for(ciTrack it = tl->begin(); it != tl->end(); ++it)
         {
-          if((*it)->isMidiTrack())
+          if(!(*it)->isAudioTrack())
             continue;
           track = (AudioTrack*)(*it);
           // Tracks that were off or muted did not get as far as the sends.
@@ -3252,32 +3252,32 @@ void AudioTrack::setAuxSend(int idx, double v)
 //---------------------------------------------------------
 int AudioOutput::height() const
 {
-  if (_isVisible)
+  if (isVisible())
     return _height;
   return 0;
 }
 int AudioInput::height() const
 {
-  if (_isVisible)
+  if (isVisible())
     return _height;
   return 0;
 }
 int AudioAux::height() const
 {
-  if (_isVisible)
+  if (isVisible())
     return _height;
   return 0;
 }
 int AudioGroup::height() const
 {
-  if (_isVisible)
+  if (isVisible())
     return _height;
   return 0;
 }
 
 int WaveTrack::height() const
 {
-  if (_isVisible)
+  if (isVisible())
     return _height;
   return 0;
 }

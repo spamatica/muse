@@ -354,6 +354,29 @@ class Song : public QObject {
 //      QFont readFont(Xml& xml, const char* name);
       // After a song file is successfully loaded with read(), some items which
       //  reference other items in the file need to be resolved. (Mixer strip configs etc.)
+      // Finds the folders that tracks were read to be in.
+      void resolveFolderReferences();
+
+      // Folders: See FolderTrack.
+      // Whether any track is in the folder.
+      bool folderHasTracks(const FolderTrack* folder) const;
+      // Unselects the tracks that are hidden, by a folded folder or by their type being hidden.
+      // Hidden tracks must not be selected, so that actions on the selected tracks never affect them.
+      // Returns true if any track was unselected. Does not send any update.
+      bool unselectHiddenTracks();
+      // Puts the tracks in the folder, as the last tracks of it, or out of their folders if folder is null.
+      // Tracks that are folders are ignored, and tracks that are already there. Undoable.
+      void moveTracksToFolder(const std::vector<Track*>& tracks, FolderTrack* folder);
+      // Drag and drop of a track in the arranger: Moves the track to the place of the target track.
+      // If the target is a folder, the track goes in it as the last track. If the target is in a folder, the
+      //  track goes in the folder too. Otherwise the track is not in a folder. A folder is moved with its tracks,
+      //  and it can not be moved into a folder. Undoable.
+      void dragMoveTrack(Track* dragged, Track* target);
+      // Moves the selected tracks up or down in the track list, or all the way to the top or bottom if full.
+      // The tracks in a folder move inside the folder, the others move with the folders as a whole. Undoable.
+      void moveSelectedTracks(bool up, bool full);
+      // Gives the track list the order, and the tracks their folders. Does nothing if nothing changes. Undoable.
+      void applyTrackOrder(const std::vector<Track*>& order, const std::map<Track*, FolderTrack*>& folders);
       void resolveSongfileReferences();
 
       QString getSongInfo() { return songInfoStr; }
