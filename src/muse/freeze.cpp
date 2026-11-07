@@ -26,6 +26,8 @@
 #include <QTimer>
 
 #include "track.h"
+#include "synth.h"
+#include "midiport.h"
 #include "audio.h"
 #include "driver/audiodev.h"
 #include "globals.h"
@@ -47,10 +49,76 @@ static std::mutex freezeMutex;
 
 bool AudioTrack::canFreeze() const
 {
-  if(type() != Track::WAVE && type() != Track::AUDIO_SOFTSYNTH)
+  return type() == Track::WAVE || type() == Track::AUDIO_SOFTSYNTH;
+}
+
+//---------------------------------------------------------
+//   drivenSynth
+//---------------------------------------------------------
+
+SynthI* MidiTrack::drivenSynth() const
+{
+  const int p = outPort();
+  if(p < 0 || p >= MIDI_PORTS)
+    return nullptr;
+  MidiDevice* md = MusEGlobal::midiPorts[p].device();
+  return (md && md->isSynti()) ? static_cast<SynthI*>(md) : nullptr;
+}
+
+//---------------------------------------------------------
+//   frozenReadOnly
+//---------------------------------------------------------
+
+bool Track::frozenReadOnly() const
+{
+  if(isMidiTrack())
+  {
+    const SynthI* si = static_cast<const MidiTrack*>(this)->drivenSynth();
+    return si && si->frozen();
+  }
+  return type() != AUDIO_OUTPUT && type() != AUDIO_INPUT && type() != AUDIO_GROUP && type() != AUDIO_AUX &&
+         static_cast<const AudioTrack*>(this)->frozen();
+}
+
+//---------------------------------------------------------
+//   usedOutputChannels
+//    Only the first channels() channels go through the effects rack and are captured. A synth can have
+//    more outputs, which are only used if there are routes that take them. A route takes the channels
+//    starting at its 'channel' (of this track), 'channels' of them, or as many as the destination has
+//    if that is unspecified (see AudioTrack::getData).
+//---------------------------------------------------------
+
+int AudioTrack::usedOutputChannels() const
+{
+  const int total = totalProcessBuffers();
+  int used = channels();
+  const RouteList* rl = outRoutes();
+  for(ciRoute ir = rl->begin(); ir != rl->end(); ++ir)
+  {
+    if(ir->type != Route::TRACK_ROUTE || !ir->track || ir->track->isMidiTrack())
+      continue;
+    const int start = ir->channel < 0 ? 0 : ir->channel;
+    if(start >= total)
+      continue;
+    int count = ir->channels;
+    if(count < 0)
+      count = static_cast<const AudioTrack*>(ir->track)->channels();
+    if(start + count > total)
+      count = total - start;
+    if(start + count > used)
+      used = start + count;
+  }
+  return used;
+}
+
+// Shows a message and returns true if more channels are in use than can be frozen.
+static bool freezeChannelsError(const AudioTrack* t)
+{
+  if(t->usedOutputChannels() <= t->channels())
     return false;
-  // Only the main (first two) channels go through the effects rack and are captured.
-  return totalProcessBuffers() == channels();
+  QMessageBox::warning(MusEGlobal::muse, QObject::tr("Freeze track"),
+    QObject::tr("Only up to two channels can be frozen. This track has routes that use more of its output channels."));
+  return true;
 }
 
 //---------------------------------------------------------
@@ -439,6 +507,8 @@ bool Song::freezeTrackStart(AudioTrack* t)
   }
   if(t->frozen())
     return true;
+  if(freezeChannelsError(t))
+    return true;
   if(MusEGlobal::audio->isPlaying() || MusEGlobal::audio->bounce() || freezeTrack)
   {
     QMessageBox::warning(MusEGlobal::muse, title, tr("Stop the transport before freezing a track."));
@@ -451,8 +521,9 @@ bool Song::freezeTrackStart(AudioTrack* t)
     return true;
   }
 
-  // Render to the end of the last part on a wave track, or to the end of the song for a synth
-  //  (it is fed by midi tracks), plus a tail for reverbs, synth releases etc.
+  // Render to the end of the last part on a wave track, or on the midi tracks that play a synth,
+  //  plus a tail for reverbs, synth releases etc.
+  // Those midi tracks can not be edited while the synth is frozen, so the end stays right.
   const unsigned tail_frames = 5 * MusEGlobal::sampleRate;
   int64_t end_frame = 0;
   if(t->type() == Track::WAVE)
@@ -465,7 +536,33 @@ bool Song::freezeTrackStart(AudioTrack* t)
     }
   }
   else
-    end_frame = Pos(len(), true).frame();
+  {
+    const SynthI* si = static_cast<const SynthI*>(t);
+    for(ciMidiTrack im = midis()->begin(); im != midis()->end(); ++im)
+    {
+      const MidiTrack* mt = *im;
+      if(mt->drivenSynth() != si)
+        continue;
+      if(mt->recordFlag())
+      {
+        QMessageBox::warning(MusEGlobal::muse, title,
+          tr("The midi track \"%1\", which plays this synth, is armed for recording.").arg(mt->name()));
+        return true;
+      }
+      for(ciPart ip = mt->cparts()->begin(); ip != mt->cparts()->end(); ++ip)
+      {
+        const int64_t e = ip->second->endFrame();
+        if(e > end_frame)
+          end_frame = e;
+      }
+    }
+    if(end_frame == 0)
+    {
+      QMessageBox::warning(MusEGlobal::muse, title,
+        tr("No midi track with parts plays this synth, there is nothing to render."));
+      return true;
+    }
+  }
   const int64_t frames = end_frame + tail_frames;
 
   QString err;
@@ -551,9 +648,14 @@ void Song::freezeTrackInteractive(AudioTrack* t)
   if(!t || t->frozen() || t->freezeCapturing() || freezeTrack)
     return;
 
+  // Say so before asking for a confirmation.
+  if(freezeChannelsError(t))
+    return;
+
   QMessageBox mb(QMessageBox::Question, tr("Freeze track"),
     tr("Freeze track \"%1\"?\n\nThe track will be rendered to a wave file that is played instead of the "
-       "track's processing. Parts on the track can not be edited until it is unfrozen.").arg(t->name()),
+       "track's processing. Parts on the track can not be edited until it is unfrozen.%2").arg(t->name())
+       .arg(t->isSynthTrack() ? tr("\nThe same goes for the midi tracks that play the synth.") : QString()),
     QMessageBox::NoButton, MusEGlobal::muse);
   // Custom buttons, the standard ones trigger a KDE localization warning.
   QPushButton* ok_btn = mb.addButton(tr("Freeze"), QMessageBox::AcceptRole);

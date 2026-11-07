@@ -2366,7 +2366,12 @@ void TList::mousePressEvent(QMouseEvent* ev)
                 else {
                     // This is a minor operation easily manually undoable. Let's not clog the undo list with it.
                     if (!t->setRecordFlag1(val))
+                    {
+                        if (val && t->isMidiTrack() && t->frozenReadOnly())
+                            QMessageBox::information(this, tr("Frozen synth"),
+                                tr("This midi track plays a frozen synth and can not be recorded to.\nUnfreeze the synth first."));
                         break;
+                    }
                     MusECore::PendingOperationList operations;
                     operations.add(MusECore::PendingOperationItem(t, val, MusECore::PendingOperationItem::SetTrackRecord));
                     MusEGlobal::audio->msgExecutePendingOperations(operations, true);

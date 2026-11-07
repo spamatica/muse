@@ -56,6 +56,7 @@ namespace MusECore {
 class Pipeline;
 class PluginI;
 class MidiPort;
+class SynthI;
 class Xml;
 struct DrumMap;
 class WorkingDrumMapList;
@@ -400,6 +401,9 @@ class Track {
       bool isMidiTrack() const       { return type() == MIDI || type() == DRUM; }
       bool isDrumTrack() const       { return type() == DRUM; }
       bool isSynthTrack() const      { return type() == AUDIO_SOFTSYNTH; }
+      // A frozen track, or a midi track that plays a frozen synth, can not be edited: What it plays
+      //  is rendered to a file, which must stay in step with the parts. See freeze.cpp.
+      bool frozenReadOnly() const;
       virtual bool canRecord() const { return false; }
       virtual bool canRecordMonitor() const { return false; }
       virtual AutomationType automationType() const    = 0;
@@ -479,7 +483,7 @@ class MidiTrack : public Track {
 
 
       // Called from gui thread only.
-      virtual bool setRecordFlag1(bool) { return canRecord(); }
+      virtual bool setRecordFlag1(bool f) { return canRecord() && !(f && frozenReadOnly()); }
       // Called from audio thread only.
       virtual void setRecordFlag2(bool f) { if(canRecord()) _recordFlag = f; }
       // Same as setRecordFlag2 except it can automatically set the monitor flag
@@ -542,6 +546,8 @@ class MidiTrack : public Track {
       virtual bool noOutRoute() const;
       
       int outPort() const             { return _outPort;     }
+      // The synth that this track plays through its output port, or null if the port has no synth.
+      SynthI* drivenSynth() const;
       int outChannel() const          { return _outChannel;  }
 
       // Given ctrl, if ctrl is a drum (per-note) controller, fills the other parameters with the
@@ -825,6 +831,9 @@ class AudioTrack : public Track {
       const QString& frozenFileName() const { return _frozenFileName; }
       // Whether this kind of track can be frozen (wave and synth tracks).
       bool canFreeze() const;
+      // The number of output channels that are in use: at least channels(), more if routes take channels
+      //  beyond that (a synth with several outputs). Only channels() of them can be frozen.
+      int usedOutputChannels() const;
       // GUI thread: Start rendering. Creates the file. Returns true on error.
       bool freezeBegin(QString* errorMsg = nullptr);
       // GUI thread: Finish rendering. If at least requiredFrames were rendered the track becomes frozen,

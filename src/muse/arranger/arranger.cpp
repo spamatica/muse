@@ -214,7 +214,7 @@ void Arranger::setHeaderWhatsThis()
     header->setWhatsThis(TList::COL_OPORT,    tr("Midi/Drum track: Output port.\nSynth track: Right-click to show GUI."));
 //    header->setWhatsThis(TList::COL_TIMELOCK, tr("Time lock"));
     header->setWhatsThis(TList::COL_CLEF,     tr("Notation clef. Select this tracks notation clef."));
-    header->setWhatsThis(TList::COL_FREEZE,   tr("Freeze track. Click to render the track with its effects to a wave file\nthat is played instead, saving CPU. Click again to unfreeze.\nParts of a frozen track can not be edited."));
+    header->setWhatsThis(TList::COL_FREEZE,   tr("Freeze track. Click to render the track with its effects to a wave file\nthat is played instead, saving CPU. Click again to unfreeze.\nParts of a frozen track, and of the midi tracks that play a frozen synth, can not be edited."));
 }
 
 //---------------------------------------------------------

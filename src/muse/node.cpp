@@ -1118,6 +1118,11 @@ void AudioTrack::copyData(unsigned pos,
         static_cast<SynthI*>(this)->discardEvents();
       if(MusEGlobal::audio->isPlaying())
         frozenHaveData = frozenFetch(pos, trackChans, nframes, buffer);
+      // Only the first trackChans channels are frozen. A synth may have more outputs, they are not in use
+      //  (checked when freezing) and must not hold stale data from before.
+      if(frozenHaveData)
+        for(i = trackChans; i < srcTotalOutChans; ++i)
+          memset(buffer[i], 0, sizeof(float) * nframes);
     }
 
     if(isFrozenPlay ? !frozenHaveData : !getData(pos, srcTotalOutChans, nframes, buffer))

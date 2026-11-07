@@ -2179,7 +2179,8 @@ bool Song::applyOperation(const UndoOp& op, OperationType type, void* sender)
 
 //---------------------------------------------------------
 //   opTouchesFrozenTrack
-//    Whether the operation would edit the parts or events of a frozen track.
+//    Whether the operation would edit the parts or events of a frozen track, or of a midi track that
+//     plays a frozen synth.
 //    Frozen tracks play a rendered file, so editing what they were rendered from is not allowed
 //     until they are unfrozen.
 //---------------------------------------------------------
@@ -2206,9 +2207,7 @@ static bool opTouchesFrozenTrack(const UndoOp& op)
       return false;
   }
 
-  const auto frozen_track = [](const Track* t) {
-    return t && !t->isMidiTrack() && static_cast<const AudioTrack*>(t)->frozen();
-  };
+  const auto frozen_track = [](const Track* t) { return t && t->frozenReadOnly(); };
 
   if(op.part && frozen_track(op.part->track()))
     return true;
@@ -2238,7 +2237,7 @@ bool Song::applyOperationGroup(Undo& group, OperationType type, void* sender)
     if(removed_frozen)
     {
       QMessageBox::information(MusEGlobal::muse, tr("Frozen track"),
-        tr("Parts on a frozen track can not be edited.\nUnfreeze the track first."));
+        tr("Parts on a frozen track, or on a midi track that plays a frozen synth, can not be edited.\nUnfreeze the track first."));
       // Let the views refresh, in case they were showing a move or change that did not happen.
       update(SC_PART_MODIFIED);
       if(group.empty())
