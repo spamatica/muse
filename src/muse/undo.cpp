@@ -2179,14 +2179,20 @@ bool Song::applyOperation(const UndoOp& op, OperationType type, void* sender)
 
 //---------------------------------------------------------
 //   opTouchesFrozenTrack
-//    Whether the operation would edit the parts or events of a frozen track, or of a midi track that
-//     plays a frozen synth.
+//    Whether the operation would edit something that a frozen track was rendered from:
+//     the parts or events of a frozen track, or of a midi track that plays a frozen synth, or the
+//     automation of the plugin and synth parameters of a frozen track.
 //    Frozen tracks play a rendered file, so editing what they were rendered from is not allowed
 //     until they are unfrozen.
+//    The volume, pan and mute automation is applied after the frozen signal, so it stays editable.
 //---------------------------------------------------------
 
-static bool opTouchesFrozenTrack(const UndoOp& op)
+enum FrozenEditKind { FrozenEditNone = 0, FrozenEditParts = 1, FrozenEditAutomation = 2 };
+
+static FrozenEditKind opTouchesFrozenTrack(const UndoOp& op)
 {
+  const auto frozen_track = [](const Track* t) { return t && t->frozenReadOnly(); };
+
   switch(op.type)
   {
     case UndoOp::AddPart:
@@ -2202,19 +2208,37 @@ static bool opTouchesFrozenTrack(const UndoOp& op)
     case UndoOp::DeleteEvent:
     case UndoOp::ModifyEvent:
     case UndoOp::ModifyClip:
-    break;
+      if(op.part && frozen_track(op.part->track()))
+        return FrozenEditParts;
+      // A part can also be moved to another track.
+      if(op.type == UndoOp::MovePart && frozen_track(op.track))
+        return FrozenEditParts;
+      return FrozenEditNone;
+
+    case UndoOp::AddAudioCtrlVal:
+    case UndoOp::DeleteAudioCtrlVal:
+    case UndoOp::AddAudioCtrlValStruct:
+    case UndoOp::ModifyAudioCtrlVal:
+    case UndoOp::ModifyAudioCtrlValList:
+    {
+      int id = 0;
+      switch(op.type)
+      {
+        case UndoOp::AddAudioCtrlVal:
+        case UndoOp::DeleteAudioCtrlVal:     id = op._audioCtrlIdAddDel; break;
+        case UndoOp::AddAudioCtrlValStruct:  id = op._audioCtrlIdStruct; break;
+        case UndoOp::ModifyAudioCtrlVal:     id = op._audioCtrlID; break;
+        default:                             id = op._audioCtrlIdModify; break;
+      }
+      // Volume, pan and mute (and anything else below the plugin controllers) come after the frozen signal.
+      if(id >= AC_PLUGIN_CTL_BASE && frozen_track(op.track))
+        return FrozenEditAutomation;
+      return FrozenEditNone;
+    }
+
     default:
-      return false;
+      return FrozenEditNone;
   }
-
-  const auto frozen_track = [](const Track* t) { return t && t->frozenReadOnly(); };
-
-  if(op.part && frozen_track(op.part->track()))
-    return true;
-  // A part can also be moved to another track.
-  if(op.type == UndoOp::MovePart && frozen_track(op.track))
-    return true;
-  return false;
 }
 
 bool Song::applyOperationGroup(Undo& group, OperationType type, void* sender)
@@ -2223,23 +2247,37 @@ bool Song::applyOperationGroup(Undo& group, OperationType type, void* sender)
   if (!group.empty())
   {
     // Remove any operations that would edit a frozen track.
-    bool removed_frozen = false;
+    bool removed_parts = false;
+    bool removed_automation = false;
     for(iUndoOp iu = group.begin(); iu != group.end(); )
     {
-      if(opTouchesFrozenTrack(*iu))
+      const FrozenEditKind kind = opTouchesFrozenTrack(*iu);
+      if(kind != FrozenEditNone)
       {
         iu = group.erase(iu);
-        removed_frozen = true;
+        if(kind == FrozenEditParts)
+          removed_parts = true;
+        else
+          removed_automation = true;
       }
       else
         ++iu;
     }
-    if(removed_frozen)
+    if(removed_parts || removed_automation)
     {
-      QMessageBox::information(MusEGlobal::muse, tr("Frozen track"),
-        tr("Parts on a frozen track, or on a midi track that plays a frozen synth, can not be edited.\nUnfreeze the track first."));
+      QString msg;
+      if(removed_parts)
+        msg = tr("Parts on a frozen track, or on a midi track that plays a frozen synth, can not be edited.");
+      if(removed_automation)
+      {
+        if(!msg.isEmpty())
+          msg += "\n";
+        msg += tr("The automation of plugin and synth parameters on a frozen track can not be edited.");
+      }
+      QMessageBox::information(MusEGlobal::muse, tr("Frozen track"), msg + tr("\nUnfreeze the track first."));
       // Let the views refresh, in case they were showing a move or change that did not happen.
-      update(SC_PART_MODIFIED);
+      update(SC_PART_MODIFIED | SC_EVENT_INSERTED | SC_EVENT_REMOVED | SC_EVENT_MODIFIED |
+             SC_AUDIO_CONTROLLER | SC_AUDIO_CONTROLLER_LIST | SC_AUDIO_CONTROLLER_SELECTION);
       if(group.empty())
         return false;
     }
