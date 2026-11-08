@@ -216,6 +216,7 @@ class MusE : public QMainWindow
 #endif
 
     // Audio Menu Actions
+    QAction *audioSaveMixerConfigAction, *audioLoadMixerConfigAction;
     QAction *audioBounce2TrackAction, *audioBounce2FileAction, *audioRestartAction;
 
     // Automation Menu Actions

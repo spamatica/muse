@@ -55,6 +55,7 @@
 #include "knob.h"
 #include "slider.h"
 #include "strip.h"
+#include "components/mixerconfigdialog.h"
 #include "components/routedialog.h"
 
 //#define __WIDTH_COMPENSATION 4
@@ -117,6 +118,10 @@ AudioMixerApp::AudioMixerApp(QWidget* parent, MusEGlobal::MixerConfig* c, bool d
       menuConfig = menuBar()->addMenu(tr("&Create"));
       connect(menuConfig, &QMenu::aboutToShow, [=]() { menuConfig->clear(); MusEGui::populateAddTrack(menuConfig, true); } );
       connect(menuConfig, &QMenu::triggered, [](QAction* a) { MusEGlobal::song->addNewTrack(a); } );
+
+      menuMixerConfig = menuBar()->addMenu(tr("C&onfig"));
+      menuMixerConfig->addAction(tr("Save Mixer Configuration..."), [this]() { MusEGui::saveMixerConfiguration(this); });
+      menuMixerConfig->addAction(tr("Load Mixer Configuration..."), [this]() { MusEGui::loadMixerConfiguration(this); });
 
       menuView = menuBar()->addMenu(tr("&View"));
       menuStrips = menuView->addMenu(tr("Strips"));
@@ -938,10 +943,10 @@ void AudioMixerApp::setSizing()
       const QFontMetrics fm = fontMetrics();
 // Width() is obsolete. Qt >= 5.11 use horizontalAdvance().
 #if QT_VERSION >= 0x050b00
-      const int totalMenuW = fm.horizontalAdvance(menuConfig->title() + menuView->title()) +
+      const int totalMenuW = fm.horizontalAdvance(menuConfig->title() + menuMixerConfig->title() + menuView->title()) +
         fm.horizontalAdvance('0') * 4 + 6;
 #else
-      const int totalMenuW = fm.width(menuConfig->title() + menuView->title()) + fm.width('0') * 4 + 6;
+      const int totalMenuW = fm.width(menuConfig->title() + menuMixerConfig->title() + menuView->title()) + fm.width('0') * 4 + 6;
 #endif
       if(w < totalMenuW)
         w = totalMenuW;

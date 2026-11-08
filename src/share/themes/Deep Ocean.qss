@@ -238,6 +238,12 @@ QCheckBox::indicator:checked, QAbstractItemView::indicator:checked {
     background: aqua;
 }
 
+/* Partially checked (tri-state): a bar across the middle. */
+QCheckBox::indicator:indeterminate, QAbstractItemView::indicator:indeterminate {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 transparent, stop:0.3 transparent, stop:0.3 aqua, stop:0.7 aqua, stop:0.7 transparent, stop:1 transparent);
+}
+
 QRadioButton::indicator {
     border: 2px solid rgb(90, 90, 90);
     border-radius: 5px;

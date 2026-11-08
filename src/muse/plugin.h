@@ -1008,6 +1008,12 @@ extern float midi2LadspaValue(const LADSPA_Descriptor* plugin, unsigned long por
 extern CtrlValueType ladspaCtrlValueType(const LADSPA_Descriptor* plugin, int port);
 extern CtrlList::Mode ladspaCtrlMode(const LADSPA_Descriptor* plugin, int port);
 
+// Creates a plugin from XML (a plugin preset, or what is dragged between effect racks), for the rack position
+//  idx of the track. Any automation controllers and midi assignments in the XML are moved to cll and macm
+//  if given (the caller owns them then), otherwise they are deleted. Returns null on error.
+// If the plugin is not available, the plugin is returned without a plugin (see PluginI::plugin()).
+PluginI* initPluginFromXml(AudioTrack* track, Xml xml, int idx, CtrlListList *cll = nullptr, MidiAudioCtrlMap *macm = nullptr);
+
 } // namespace MusECore
 
 

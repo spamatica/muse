@@ -968,6 +968,7 @@ class AudioTrack : public Track {
       void seekPrevACEvent(int);
       void seekNextACEvent(int);
       AuxSendValueList *getAuxSendValueList() { return &_auxSend; }
+      const AuxSendValueList *getAuxSendValueList() const { return &_auxSend; }
 
       // Drives things like plugin/synth GUIs.
       virtual void guiHeartBeat();

@@ -125,6 +125,7 @@ class AudioMixerApp : public QMainWindow {
       int oldAuxsSize;
 
       QMenu* menuConfig;
+      QMenu* menuMixerConfig;
       QMenu* menuView;
       QAction* showMidiTracksId;
 //      QAction* showDrumTracksId;

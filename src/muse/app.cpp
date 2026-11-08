@@ -52,6 +52,7 @@
 //#include <typeinfo>
 #include <random>
 
+#include "mixerconfigdialog.h"
 #include "app.h"
 #include "master/lmaster.h"
 #include "al/dsp.h"
@@ -845,6 +846,10 @@ MusE::MusE() : QMainWindow()
       audioBounce2TrackAction = new QAction(*MusEGui::downmixTrackSVGIcon, tr("Render Downmix to Selected Wave Track"), this);
       audioBounce2FileAction = new QAction(*MusEGui::downmixFileSVGIcon, tr("Render Downmix to a File..."), this);
       audioRestartAction = new QAction(*MusEGui::restartSVGIcon, tr("Restart Audio"), this);
+      audioSaveMixerConfigAction = new QAction(tr("Save Mixer Configuration..."), this);
+      audioSaveMixerConfigAction->setStatusTip(tr("Save the mixer settings and effect plugins of the audio tracks to a file"));
+      audioLoadMixerConfigAction = new QAction(tr("Load Mixer Configuration..."), this);
+      audioLoadMixerConfigAction->setStatusTip(tr("Load mixer settings from a mixer configuration file or a song"));
 
       //-------- Automation Actions
 // REMOVE Tim. automation. Removed.
@@ -952,6 +957,9 @@ MusE::MusE() : QMainWindow()
       connect(audioBounce2TrackAction, SIGNAL(triggered()), SLOT(bounceToTrack()));
       connect(audioBounce2FileAction, SIGNAL(triggered()), SLOT(bounceToFile()));
       connect(audioRestartAction, SIGNAL(triggered()), SLOT(seqRestart()));
+
+      connect(audioSaveMixerConfigAction, &QAction::triggered, [this]() { MusEGui::saveMixerConfiguration(this); });
+      connect(audioLoadMixerConfigAction, &QAction::triggered, [this]() { MusEGui::loadMixerConfiguration(this); });
 
       //-------- Automation connections
 // REMOVE Tim. automation. Removed.
@@ -1193,6 +1201,9 @@ MusE::MusE() : QMainWindow()
 
       menu_audio->addAction(audioBounce2TrackAction);
       menu_audio->addAction(audioBounce2FileAction);
+      menu_audio->addSeparator();
+      menu_audio->addAction(audioSaveMixerConfigAction);
+      menu_audio->addAction(audioLoadMixerConfigAction);
       menu_audio->addSeparator();
       menu_audio->addAction(audioRestartAction);
       menu_audio->addSeparator();
