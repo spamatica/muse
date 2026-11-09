@@ -31,7 +31,6 @@
 #include "marker.h"
 
 class QCloseEvent;
-class QLineEdit;
 class QToolBar;
 class QToolButton;
 class QTreeWidget;
@@ -73,7 +72,6 @@ class MarkerView : public QWidget {
       Q_OBJECT
     
       QTreeWidget* table;
-      QLineEdit* editName;
       PosEdit* editSMPTE;
       PosEdit* editTick;
       QToolButton* lock;
@@ -87,7 +85,8 @@ class MarkerView : public QWidget {
       void addMarker(unsigned);
       void deleteMarker();
       void markerSelectionChanged();
-      void nameChanged();
+      void doubleClicked(QTreeWidgetItem*, int);
+      void itemEdited(QTreeWidgetItem*, int);
       void tickChanged(const MusECore::Pos&);
       void lockChanged(bool);
       void markerChanged(int);
