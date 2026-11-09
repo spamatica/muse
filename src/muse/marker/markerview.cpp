@@ -39,7 +39,6 @@
 #include <QCloseEvent>
 #include <QGroupBox>
 #include <QHeaderView>
-#include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
 //#include <QHBoxLayout>
@@ -86,6 +85,7 @@ MusECore::Marker MarkerItem::marker() const { return _marker; }
 void MarkerItem::setMarker(const MusECore::Marker& m)
 {
     _marker = m;
+    setFlags(flags() | Qt::ItemIsEditable);
     setText(COL_NAME, m.name());
     setPos(m);
     setLock(m.type() == MusECore::Pos::FRAMES);
@@ -198,6 +198,8 @@ MarkerView::MarkerView(QWidget* parent)
 
     table->setIndentation(2);
     table->setFocusPolicy(Qt::StrongFocus);
+    // Only the description column is editable, and only by double clicking it.
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
 
     QStringList columnnames;
     columnnames << tr("Bar:Beat:Tick")
@@ -213,6 +215,10 @@ MarkerView::MarkerView(QWidget* parent)
             SLOT(markerSelectionChanged()));
     connect(table, SIGNAL(itemClicked(QTreeWidgetItem*, int)),
             SLOT(clicked(QTreeWidgetItem*)));
+    connect(table, SIGNAL(itemDoubleClicked(QTreeWidgetItem*, int)),
+            SLOT(doubleClicked(QTreeWidgetItem*, int)));
+    connect(table, SIGNAL(itemChanged(QTreeWidgetItem*, int)),
+            SLOT(itemEdited(QTreeWidgetItem*, int)));
 
     //      QGroupBox* props = new QGroupBox(tr("Marker Properties"));
     QHBoxLayout *hbox = new QHBoxLayout;
@@ -232,20 +238,13 @@ MarkerView::MarkerView(QWidget* parent)
     lock->setCheckable(true);
     lock->setToolTip(tr("Toggle timecode editing"));
 
-    editName = new QLineEdit;
-    editName->setSizePolicy(QSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred));
-    editName->setToolTip(tr("Edit marker description"));
-    editName->setPlaceholderText(tr("<Description>"));
-
     hbox->addWidget(editTick);
     hbox->addWidget(editSMPTE);
     hbox->addWidget(lock);
-    hbox->addWidget(editName);
+    hbox->addStretch();
     //      props->setLayout(hbox);
 
 
-    connect(editName, SIGNAL(editingFinished()),
-            SLOT(nameChanged()));
     connect(editTick, SIGNAL(valueChanged(const MusECore::Pos&)),
             SLOT(tickChanged(const MusECore::Pos&)));
     connect(editSMPTE, SIGNAL(valueChanged(const MusECore::Pos&)),
@@ -562,23 +561,18 @@ void MarkerView::markerSelectionChanged()
     MarkerItem* item = (MarkerItem*)table->currentItem();
     editTick->blockSignals(true);
     editSMPTE->blockSignals(true);
-    editName->blockSignals(true);
     lock->blockSignals(true);
     if (item == nullptr) {  // never triggered
         editTick->setValue(0);
         editSMPTE->setValue(0);
-        editName->setText(QString(""));
         lock->setChecked(false);
         editSMPTE->setEnabled(false);
         editTick->setEnabled(false);
         lock->setEnabled(false);
-        editName->setEnabled(false);
     }
     else {
         editTick->setValue(item->marker());
         editSMPTE->setValue(item->marker());
-        editName->setText(item->name());
-        editName->setEnabled(true);
         lock->setChecked(item->lock());
         lock->setEnabled(true);
 
@@ -587,7 +581,6 @@ void MarkerView::markerSelectionChanged()
     }
     editTick->blockSignals(false);
     editSMPTE->blockSignals(false);
-    editName->blockSignals(false);
     lock->blockSignals(false);
 }
 
@@ -605,19 +598,30 @@ void MarkerView::clicked(QTreeWidgetItem* i)
 }
 
 //---------------------------------------------------------
-//   nameChanged
+//   doubleClicked
+//    Start in-line editing of the description
 //---------------------------------------------------------
 
-void MarkerView::nameChanged()
+void MarkerView::doubleClicked(QTreeWidgetItem* i, int col)
 {
-    MarkerItem* item = (MarkerItem*)table->currentItem();
-    if (item)
-    {
-        const QString txt = editName->text();
-        // Avoid multiple identical changes from return pressed and focus lost etc.
-        if(item->marker().name() != txt)
-            MusEGlobal::song->setMarkerName(item->marker(), txt);
-    }
+    if (i && col == COL_NAME)
+        table->editItem(i, COL_NAME);
+}
+
+//---------------------------------------------------------
+//   itemEdited
+//    The in-line editor committed a new description
+//---------------------------------------------------------
+
+void MarkerView::itemEdited(QTreeWidgetItem* i, int col)
+{
+    if (!i || col != COL_NAME)
+        return;
+    MarkerItem* item = static_cast<MarkerItem*>(i);
+    const QString txt = item->text(COL_NAME);
+    // Programmatic updates and no-op edits already match the marker.
+    if (item->marker().name() != txt)
+        MusEGlobal::song->setMarkerName(item->marker(), txt);
 }
 
 //---------------------------------------------------------
