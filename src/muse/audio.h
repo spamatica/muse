@@ -125,6 +125,7 @@ class Audio {
       bool idle;              // do nothing in idle mode
       bool _freewheel;
       BounceState _bounceState;
+      bool _bounceEndFrameValid = false; // Use _freezeEndFrame as the end of a bounce to file instead of the right marker.
       unsigned _freezeEndFrame; // Used instead of the right marker while Song::freezeTrack is set.
       unsigned _loopFrame;     // Startframe of loop if in LOOP mode. Not quite the same as left marker !
       int _loopCount;         // Number of times we have looped so far
@@ -301,6 +302,10 @@ class Audio {
       void msgBounce(const Pos* startPos = nullptr);
       // For freezing a track: The frame at which the bounce pass ends, instead of at the right marker.
       void setFreezeEndFrame(unsigned f) { _freezeEndFrame = f; }
+      // For bounce to file of a marker range: end the pass at the given frame instead of at the
+      //  right marker. Call clearBounceEndFrame() when the pass is done.
+      void setBounceEndFrame(unsigned f) { _freezeEndFrame = f; _bounceEndFrameValid = true; }
+      void clearBounceEndFrame() { _bounceEndFrameValid = false; }
       void msgClearControllerEvents(AudioTrack*, int);
       void msgSeekPrevACEvent(AudioTrack*, int);
       void msgSeekNextACEvent(AudioTrack*, int);

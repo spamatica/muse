@@ -21,6 +21,12 @@
 //=========================================================
 
 #include <QFileDialog>
+#include <QFileInfo>
+#include <QDir>
+#include <QFile>
+#include <QStringList>
+#include <sndfile.h>
+#include <cstring>
 
 #include "globals.h"
 #include "gconfig.h"
@@ -29,18 +35,36 @@
 
 namespace MusECore {
 
-//---------------------------------------------------------
-//   sndFileOpen
-//    sf - old soundfile, used to preset file parameters
-//---------------------------------------------------------
-
-SndFile* getSndFile(const SndFile* sf, QWidget* parent)
+QString MixdownSettings::extension() const
       {
-      MusEGui::MixdownFileDialog* dialog = new MusEGui::MixdownFileDialog(sf, parent);
-      dialog->exec();
-      MusECore::SndFile* sndFile = dialog->sndFile();
-      delete dialog;
-      return sndFile;
+      switch (format & SF_FORMAT_TYPEMASK) {
+            case SF_FORMAT_OGG: return QString("ogg");
+            case 0x230000:      return QString("mp3");
+            default:            return QString("wav");
+            }
+      }
+
+SndFile* MixdownSettings::createSndFile(const QString& filePath) const
+      {
+      QDir().mkpath(QFileInfo(filePath).absolutePath());
+      // An existing file would be appended to (or refused for compressed formats); start afresh.
+      if (QFileInfo::exists(filePath))
+            QFile::remove(filePath);
+      SndFile* sf = new SndFile(filePath);
+      sf->setFormat(format, channels, MusEGlobal::sampleRate);
+      if (quality >= 0.0)
+            sf->setWantedEncodingQuality(quality);
+      return sf;
+      }
+
+bool getMixdownSettings(QWidget* parent, const QString& suggestedDir,
+                        const QString& suggestedName, MixdownSettings& settings)
+      {
+      MusEGui::MixdownFileDialog dialog(parent, suggestedDir, suggestedName);
+      if (dialog.exec() != QDialog::Accepted)
+            return false;
+      settings = dialog.settings();
+      return true;
       }
 
 } // namespace MusECore
@@ -51,24 +75,156 @@ namespace MusEGui {
 //   MixdownFileDialog
 //---------------------------------------------------------
 
-MixdownFileDialog::MixdownFileDialog(const MusECore::SndFile* _sf,
-   QWidget* parent, Qt::WindowFlags fl)
-   : QDialog(parent, fl)
+static const int FMT_MPEG_MP3 = 0x230000 | 0x0082; // SF_FORMAT_MPEG | SF_FORMAT_MPEG_LAYER_III, libsndfile >= 1.1.0
+
+static const QStringList& audioExtensions()
+      {
+      static const QStringList l = { "wav", "ogg", "mp3" };
+      return l;
+      }
+
+static bool formatAvailable(int format)
+      {
+      SF_INFO info;
+      memset(&info, 0, sizeof(info));
+      info.samplerate = 44100;
+      info.channels   = 2;
+      info.format     = format;
+      return sf_format_check(&info) != 0;
+      }
+
+static QString formatExtension(int format)
+      {
+      switch (format & SF_FORMAT_TYPEMASK) {
+            case SF_FORMAT_OGG: return QString("ogg");
+            case 0x230000:      return QString("mp3");
+            default:            return QString("wav");
+            }
+      }
+
+MixdownFileDialog::MixdownFileDialog(QWidget* parent, const QString& suggestedDir, const QString& suggestedName)
+   : QDialog(parent), _suggestedDir(suggestedDir), _suggestedName(suggestedName)
       {
       setupUi(this);
-      sf   = 0;
+      // Room for four lines of the description, whatever the font size is.
+      labelModeInfo->setMinimumHeight(labelModeInfo->fontMetrics().lineSpacing() * 4);
+
+      // Formats, only those libsndfile supports are offered.
+      comboFormat->clear();
+      _formats.clear();
+      comboFormat->addItem(tr("wav, 16 Bit"));
+      _formats.append(SF_FORMAT_WAV | SF_FORMAT_PCM_16);
+      comboFormat->addItem(tr("wav, 24 Bit"));
+      _formats.append(SF_FORMAT_WAV | SF_FORMAT_PCM_24);
+      comboFormat->addItem(tr("wav, 32 Bit (float)"));
+      _formats.append(SF_FORMAT_WAV | SF_FORMAT_FLOAT);
+      if (formatAvailable(SF_FORMAT_OGG | SF_FORMAT_VORBIS)) {
+            comboFormat->addItem(tr("ogg, Vorbis"));
+            _formats.append(SF_FORMAT_OGG | SF_FORMAT_VORBIS);
+            }
+      if (formatAvailable(FMT_MPEG_MP3)) {
+            comboFormat->addItem(tr("mp3"));
+            _formats.append(FMT_MPEG_MP3);
+            }
+      // Restore the last used settings.
+      spinQuality->setValue(MusEGlobal::config.mixdownQuality);
+      {
+      const int fi = _formats.indexOf(MusEGlobal::config.mixdownFormat);
+      if (fi >= 0)
+            comboFormat->setCurrentIndex(fi);
+      const int ci = MusEGlobal::config.mixdownChannels;
+      if (ci >= 0 && ci < comboChannel->count())
+            comboChannel->setCurrentIndex(ci);
+      comboMode->setCurrentIndex(MusEGlobal::config.mixdownMode != 0 ? 1 : 0);
+      }
+
       connect(buttonPath, SIGNAL(clicked()), SLOT(fdialog()));
-      if (_sf) {
-            int channels = _sf->channels();
-            int format   = _sf->format();
-            switch(channels) {
-                  case 1:  channels = 1; break;
-                  case 2:  channels = 0; break;
-                  case 6:  channels = 2; break;
+      connect(comboFormat, SIGNAL(currentIndexChanged(int)), SLOT(formatChanged(int)));
+      connect(comboMode, SIGNAL(currentIndexChanged(int)), SLOT(modeChanged(int)));
+      if (!suggestedName.isEmpty())
+            editPath->setText(suggestPath(suggestedDir, suggestedName));
+      modeChanged(comboMode->currentIndex());
+      formatChanged(comboFormat->currentIndex());
+      }
+
+//---------------------------------------------------------
+//   suggestPath
+//    <dir>/downmix/<name>_downmix.<ext>, with _2, _3 ... appended
+//    if a downmix with that name already exists (or was the last one made).
+//---------------------------------------------------------
+
+QString MixdownFileDialog::suggestPath(const QString& dir, const QString& name) const
+      {
+      const QString base = QDir(dir).filePath("downmix/" + name + "_downmix");
+      const QString ext  = formatExtension(_formats.value(comboFormat->currentIndex()));
+      const QString last = QFileInfo(MusEGlobal::config.mixdownPath).absoluteFilePath();
+      for (int n = 1; ; ++n) {
+            const QString stem = n == 1 ? base : base + QString("_%1").arg(n);
+            bool taken = false;
+            for (const QString& e : audioExtensions()) {
+                  const QString p = stem + "." + e;
+                  if (QFileInfo::exists(p) || QFileInfo(p).absoluteFilePath() == last)
+                        taken = true;
                   }
-            editPath->setText(_sf->path());
-            comboChannel->setCurrentIndex(channels);
-            comboFormat->setCurrentIndex(format);
+            if (!taken)
+                  return stem + "." + ext;
+            }
+      }
+
+//---------------------------------------------------------
+//   formatChanged
+//---------------------------------------------------------
+
+void MixdownFileDialog::formatChanged(int idx)
+      {
+      const int fmt = _formats.value(idx);
+      const bool compressed = (fmt & SF_FORMAT_TYPEMASK) != SF_FORMAT_WAV;
+      labelQuality->setEnabled(compressed);
+      spinQuality->setEnabled(compressed);
+      if (comboMode->currentIndex() != 0)
+            return; // The path is a folder.
+      // Keep the file extension in step with the format.
+      QString path = editPath->text();
+      const QString ext = formatExtension(fmt);
+      for (const QString& e : audioExtensions()) {
+            if (path.endsWith("." + e, Qt::CaseInsensitive)) {
+                  path.chop(e.size());
+                  editPath->setText(path + ext);
+                  break;
+                  }
+            }
+      }
+
+//---------------------------------------------------------
+//   accept
+//---------------------------------------------------------
+
+void MixdownFileDialog::modeChanged(int idx)
+      {
+      const bool markers = idx != 0;
+      TextLabel1->setText(markers ? tr("Folder") : tr("File Path"));
+      labelModeInfo->setText(markers ?
+            tr("One file for each named marker, from the marker to the next marker "
+               "(the last one to the end of the song). The file name is the project name plus the marker name.") :
+            tr("One file between the left and right range markers."));
+      if (markers) {
+            // Suggest the folder instead of a file.
+            const QString p = editPath->text();
+            bool isFile = false;
+            for (const QString& e : audioExtensions())
+                  if (p.endsWith("." + e, Qt::CaseInsensitive))
+                        isFile = true;
+            if (p.isEmpty() || isFile)
+                  editPath->setText(QDir(_suggestedDir).filePath("downmix"));
+            }
+      else {
+            const QString p = editPath->text();
+            bool isFile = false;
+            for (const QString& e : audioExtensions())
+                  if (p.endsWith("." + e, Qt::CaseInsensitive))
+                        isFile = true;
+            if (!isFile && !_suggestedName.isEmpty())
+                  editPath->setText(suggestPath(_suggestedDir, _suggestedName));
             }
       }
 
@@ -78,35 +234,32 @@ MixdownFileDialog::MixdownFileDialog(const MusECore::SndFile* _sf,
 
 void MixdownFileDialog::accept()
       {
-      QString oldpath;
-      unsigned channel = comboChannel->currentIndex();
-      unsigned format  = comboFormat->currentIndex();
+      int channel = comboChannel->currentIndex();
       switch (channel) {
             case 0: channel = 2; break;
             case 1: channel = 1; break;
             case 2: channel = 6; break;     // not implemented!
             }
-      switch (format) {
-            case 0:     // 16 bit wave
-                  format = SF_FORMAT_WAV | SF_FORMAT_PCM_16;
-                  break;
-            case 1:     // 24 bit wave
-                  format = SF_FORMAT_WAV | SF_FORMAT_PCM_24;
-                  break;
-            case 2:     // 32 bit float wave
-                  format = SF_FORMAT_WAV | SF_FORMAT_FLOAT;
-                  break;
-            }
+      const int format = _formats.value(comboFormat->currentIndex());
       QString path = editPath->text();
       if (path.isEmpty()) {
-            sf = 0;
             reject();
             return;
             }
-      if (path.right(4) != ".wav")
-            path += ".wav";
-      sf = new MusECore::SndFile(path);
-      sf->setFormat(format, channel, MusEGlobal::sampleRate);
+      _settings.markerMode = comboMode->currentIndex() != 0;
+      _settings.format     = format;
+      _settings.channels   = channel;
+      _settings.quality    = (format & SF_FORMAT_TYPEMASK) != SF_FORMAT_WAV ? spinQuality->value() / 10.0 : -1.0;
+      if (!_settings.markerMode) {
+            const QString ext = _settings.extension();
+            if (!path.endsWith("." + ext, Qt::CaseInsensitive))
+                  path += "." + ext;
+            }
+      _settings.path = path;
+      MusEGlobal::config.mixdownMode     = _settings.markerMode ? 1 : 0;
+      MusEGlobal::config.mixdownFormat   = format;
+      MusEGlobal::config.mixdownChannels = comboChannel->currentIndex();
+      MusEGlobal::config.mixdownQuality  = spinQuality->value();
       done(1);
       }
 
@@ -116,25 +269,28 @@ void MixdownFileDialog::accept()
 
 void MixdownFileDialog::fdialog()
 {
-  QString oldpath;
-  if (sf) {
-        oldpath = sf->path();
-  }
-  if (!MusEGlobal::config.mixdownPath.isEmpty()) {
-      printf("Setting oldpath to %s\n", MusEGlobal::config.mixdownPath.toLocal8Bit().data());
-      oldpath = MusEGlobal::config.mixdownPath;
-  }
-  QString path = QFileDialog::getSaveFileName(this, 0, oldpath, tr("Wave Files (*.wav);;All Files (*)"));
+  QString oldpath = editPath->text();
+  if (oldpath.isEmpty())
+        oldpath = MusEGlobal::config.mixdownPath;
+  if (comboMode->currentIndex() != 0) {
+        const QString dir = QFileDialog::getExistingDirectory(this, QString(), oldpath);
+        if (!dir.isEmpty())
+              editPath->setText(dir);
+        return;
+        }
+  QString path = QFileDialog::getSaveFileName(this, QString(), oldpath,
+        tr("Audio Files (*.wav *.ogg *.mp3);;All Files (*)"));
   if (!path.isEmpty()) {
         editPath->setText(path);
+        // Pick the matching format if the extension says so.
+        for (int i = 0; i < _formats.size(); ++i)
+              if (path.endsWith("." + formatExtension(_formats[i]), Qt::CaseInsensitive)) {
+                    if (formatExtension(_formats[comboFormat->currentIndex()]) !=
+                        formatExtension(_formats[i]))
+                          comboFormat->setCurrentIndex(i);
+                    break;
+                    }
   }
-  // check if the file already exists, which can happen.
-  // Easiest way to get the recording to work as intended we simply remove the old file.
-  if (QFileInfo::exists(path)) {
-    QFile f(path);
-    f.remove();
-  }
-  MusEGlobal::config.mixdownPath = path;
 }
 
 } // namespace MusEGui

@@ -77,6 +77,7 @@
 #include "mitplugin.h"
 #include "mittranspose.h"
 #include "components/mixdowndialog.h"
+#include "markermixdown.h"
 #include "mrconfig.h"
 #include "pianoroll.h"
 #ifdef PYTHON_SUPPORT
@@ -4318,12 +4319,22 @@ void MusE::bounceToFile(MusECore::AudioOutput* ao)
         }
     }
 
+    const QString projectName = project.completeBaseName().isEmpty() ?
+                                QString("untitled") : project.completeBaseName();
+    MusECore::MixdownSettings settings;
+    if (!MusECore::getMixdownSettings(this, MusEGlobal::museProject, projectName, settings))
+        return;
+
+    if (settings.markerMode) {
+        MusECore::MarkerMixdown::start(ao, settings, projectName);
+        return;
+    }
+
     if (checkRegionNotNull())
         return;
 
-    MusECore::SndFile* sf = MusECore::getSndFile(nullptr, this);
-    if (sf == nullptr)
-        return;
+    MusEGlobal::config.mixdownPath = settings.path;
+    MusECore::SndFile* sf = settings.createSndFile(settings.path);
 
     // Switch all wave converters to offline settings mode.
     MusEGlobal::song->setAudioConvertersOfflineOperation(true);
