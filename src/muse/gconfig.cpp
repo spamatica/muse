@@ -394,6 +394,10 @@ GlobalConfigValues config = {
       false,                        // monitoringAffectsLatency
       false,                        // commonProjectLatency
       "",                           // mixdownPath
+      0,                            // mixdownMode
+      0x010002,                     // mixdownFormat (SF_FORMAT_WAV | SF_FORMAT_PCM_16)
+      0,                            // mixdownChannels
+      4,                            // mixdownQuality
       true,                         // showNoteNamesInPianoRoll
       true,                         // showNoteTooltips
       true,                         // showTimeScaleBeatNumbers

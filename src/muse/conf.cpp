@@ -1419,6 +1419,14 @@ void readConfiguration(Xml& xml, bool doReadMidiPortConfig, bool doReadGlobalCon
                             MusEGui::SynthDialog::readRecentsConfiguration(xml);
                         else if (tag == "mixdownPath")
                               MusEGlobal::config.mixdownPath = xml.parse1();
+                        else if (tag == "mixdownMode")
+                              MusEGlobal::config.mixdownMode = xml.parseInt();
+                        else if (tag == "mixdownFormat")
+                              MusEGlobal::config.mixdownFormat = xml.parseInt();
+                        else if (tag == "mixdownChannels")
+                              MusEGlobal::config.mixdownChannels = xml.parseInt();
+                        else if (tag == "mixdownQuality")
+                              MusEGlobal::config.mixdownQuality = xml.parseInt();
                         else if (tag == "showNoteNamesInPianoRoll")
                               MusEGlobal::config.showNoteNamesInPianoRoll = xml.parseInt();
                         else if (tag == "showNoteTooltips")
@@ -2167,6 +2175,10 @@ void MusE::writeGlobalConfiguration(int level, MusECore::Xml& xml) const
       xml.intTag(level, "midiCtrlGraphMergeEraseWysiwyg", MusEGlobal::config.midiCtrlGraphMergeEraseWysiwyg);
       xml.intTag(level, "lv2UiBehavior", static_cast<int>(MusEGlobal::config.lv2UiBehavior));
       xml.strTag(level, "mixdownPath", MusEGlobal::config.mixdownPath);
+      xml.intTag(level, "mixdownMode", MusEGlobal::config.mixdownMode);
+      xml.intTag(level, "mixdownFormat", MusEGlobal::config.mixdownFormat);
+      xml.intTag(level, "mixdownChannels", MusEGlobal::config.mixdownChannels);
+      xml.intTag(level, "mixdownQuality", MusEGlobal::config.mixdownQuality);
       xml.intTag(level, "showNoteNamesInPianoRoll", MusEGlobal::config.showNoteNamesInPianoRoll);
       xml.intTag(level, "showNoteTooltips", MusEGlobal::config.showNoteTooltips);
       xml.intTag(level, "showTimeScaleBeatNumbers", MusEGlobal::config.showTimeScaleBeatNumbers);

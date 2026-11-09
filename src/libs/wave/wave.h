@@ -113,6 +113,7 @@ class SndFile {
       // Seeks are then emulated: a forward seek pads with silence on the
       //  next write, a backward seek discards frames until caught up.
       bool _writeOnly;
+      double _encodingQuality = -1.0; // Wanted quality of a compressed format, < 0 means unset.
       sf_count_t _writePos;        // Frames actually written to the file.
       sf_count_t _logicalWritePos; // Where the caller wants the next write to land.
       bool _discardWarned;
@@ -212,6 +213,9 @@ class SndFile {
       // Must be called after openWrite() and before the first write.
       //!< returns true on error
       bool setEncodingQuality(double quality);
+      // Remember the wanted encoding quality (0.0 - 1.0) for whoever opens the file; < 0 means unset.
+      void setWantedEncodingQuality(double quality) { _encodingQuality = quality; }
+      double wantedEncodingQuality() const { return _encodingQuality; }
 
       void update(bool showProgress = true);
 

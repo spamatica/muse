@@ -846,7 +846,7 @@ void Audio::process(unsigned frames)
             if (!freewheel())
                   MusEGlobal::audioPrefetch->msgTick(isRecording() || MusEGlobal::song->freezeTrack, true);
 
-            if (bounce() && (MusEGlobal::song->freezeTrack ?
+            if (bounce() && ((MusEGlobal::song->freezeTrack || _bounceEndFrameValid) ?
                              _pos.frame() >= _freezeEndFrame :
                              _pos >= MusEGlobal::song->rPos())) {
                   // Need to let the resulting stopRolling take care of resetting bounce.

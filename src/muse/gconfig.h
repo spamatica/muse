@@ -431,6 +431,10 @@ struct GlobalConfigValues {
       // Whether completely independent branches share a common latency.
       bool commonProjectLatency;
       QString mixdownPath;
+      int mixdownMode;      // Downmix dialog: 0 = range markers, 1 = markers.
+      int mixdownFormat;    // Downmix dialog: libsndfile format.
+      int mixdownChannels;  // Downmix dialog: index of the channels choice.
+      int mixdownQuality;   // Downmix dialog: compressed format quality 0 - 10.
       bool showNoteNamesInPianoRoll;
       bool showNoteTooltips;
       bool showTimeScaleBeatNumbers;

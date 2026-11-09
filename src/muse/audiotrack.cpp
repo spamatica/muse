@@ -3217,7 +3217,9 @@ bool AudioTrack::prepareRecording()
             }
 
       if(_recFile->isWriteOnly() &&
-         _recFile->setEncodingQuality(MusEGlobal::config.recordOggVorbisQuality))
+         _recFile->setEncodingQuality(_recFile->wantedEncodingQuality() >= 0.0 ?
+                                      _recFile->wantedEncodingQuality() :
+                                      MusEGlobal::config.recordOggVorbisQuality))
             fprintf(stderr, "AudioTrack::prepareRecording: could not set encoding quality for %s\n",
                     _recFile->path().toLocal8Bit().constData());
 

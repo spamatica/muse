@@ -287,6 +287,10 @@ bool SndFile::setEncodingQuality(double quality)
       if (!sf || !_writeOnly)
             return true;
       // libsndfile returns SF_TRUE on success.
+      if ((sfinfo.format & SF_FORMAT_TYPEMASK) == 0x230000) { // MPEG: use variable bitrate so quality applies
+            int mode = 2; // SF_BITRATE_MODE_VARIABLE
+            sf_command(sf, 0x1305 /* SFC_SET_BITRATE_MODE */, &mode, sizeof(mode));
+            }
       return sf_command(sf, SFC_SET_VBR_ENCODING_QUALITY, &quality, sizeof(quality)) != SF_TRUE;
       }
 bool SndFile::useConverter() const { return _useConverter; }

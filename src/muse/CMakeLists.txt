@@ -62,6 +62,7 @@ QT5_WRAP_CPP ( muse_moc_headers
       app.h
       cobject.h
       conf.h
+      markermixdown.h
       midieditor.h
       midi_editor_layout.h
       plugin.h
@@ -105,6 +106,7 @@ file (GLOB core_source_files
       audioprefetch.cpp
       audiotrack.cpp
       freeze.cpp
+      markermixdown.cpp
       cobject.cpp
       conf.cpp
       controlfifo.cpp
