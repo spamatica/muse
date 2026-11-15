@@ -1739,7 +1739,7 @@ MusECore::TrackList TList::getRecEnabledTracks()
 
 void TList::changeAutomation(QAction* act)
 {
-    if(!editAutomation || editAutomation->isMidiTrack())
+    if(!editAutomation || !editAutomation->isAudioTrack())
         return;
 
     if (act->data().toInt() == AUTO_INVALID)
@@ -1813,7 +1813,7 @@ void TList::changeAutomation(QAction* act)
 //---------------------------------------------------------
 void TList::changeAutomationColor(QAction* act)
 {
-    if(!editAutomation || editAutomation->isMidiTrack())
+    if(!editAutomation || !editAutomation->isAudioTrack())
         return;
     if(act->data().toInt() == AUTO_INVALID)
         return;
@@ -2030,7 +2030,7 @@ PopupMenu* TList::colorMenu(QColor c, int id, QWidget* parent)
 
     m->addAction(new MenuTitleItem(tr("Midi control"), m));
 
-    if(editAutomation && !editAutomation->isMidiTrack())
+    if(editAutomation && editAutomation->isAudioTrack())
     {
         QAction *act = m->addAction(tr("Assign"));
         act->setCheckable(false);

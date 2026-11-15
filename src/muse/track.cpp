@@ -639,7 +639,7 @@ QString Track::displayName() const
 
 void Track::clearRecAutomation()
 {
-    if(isMidiTrack())
+    if(!isAudioTrack())
       return;
     AudioTrack *t = static_cast<AudioTrack*>(this);
     t->recEvents()->clear();
