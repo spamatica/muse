@@ -60,6 +60,7 @@ class QToolBar;
 class QToolButton;
 class QProgressDialog;
 class QTimer;
+class QLabel;
 class QMdiSubWindow;
 class MuseMdiArea;
 class QDockWidget;
@@ -89,6 +90,7 @@ class ClipListEdit;
 class EditInstrument;
 class EditToolBar;
 class GlobalSettingsConfig;
+class McpServer;
 class MRConfig;
 class MarkerView;
 class LMaster;
@@ -216,6 +218,11 @@ class MusE : public QMainWindow
 #endif
 
     // Audio Menu Actions
+    QAction *settingsMcpAction;
+    MusEGui::McpServer* mcpServer;
+    QLabel* mcpIndicator;
+    QTimer* mcpIndicatorTimer;
+    void updateMcpIndicator(bool activity = false);
     QAction *audioSaveMixerConfigAction, *audioLoadMixerConfigAction;
     QAction *audioBounce2TrackAction, *audioBounce2FileAction, *audioRestartAction;
 

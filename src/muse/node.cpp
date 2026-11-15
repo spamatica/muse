@@ -1192,6 +1192,23 @@ void AudioTrack::copyData(unsigned pos,
       if(_meter[c] > _peak[c])
         _peak[c] = _meter[c];
 
+      if(_levelMeasure.load(std::memory_order_relaxed))
+      {
+        const float* lp = (c >= valid_out_bufs) ? buffer[c] : outBuffers[c];
+        double sumsq = 0.0;
+        for(unsigned k = 0; k < nframes; ++k)
+        {
+          const double v = *lp++;
+          sumsq += v * v;
+        }
+        LevelAccum& acc = _levelAcc[c];
+        if(meter[c] > acc.peak.load(std::memory_order_relaxed))
+          acc.peak.store(meter[c], std::memory_order_relaxed);
+        acc.sumsq.store(acc.sumsq.load(std::memory_order_relaxed) + sumsq, std::memory_order_relaxed);
+        if(c == 0)
+          _levelFrames.fetch_add(nframes, std::memory_order_relaxed);
+      }
+
       if(_meter [c] > 1.0)
          _isClipped[c] = true;
     }

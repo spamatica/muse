@@ -24,6 +24,7 @@
 
 //#include <limits.h>
 #include <stdlib.h>
+#include <cmath>
 #include <stdio.h>
 #include <map>
 
@@ -1919,6 +1920,37 @@ void AudioTrack::writeProperties(int level, Xml& xml) const
 
       xml.etag(--level, "AudioTrack");
       }
+
+//---------------------------------------------------------
+//   startLevelMeasure
+//---------------------------------------------------------
+
+void AudioTrack::startLevelMeasure()
+{
+  _levelMeasure.store(false, std::memory_order_relaxed);
+  for(int c = 0; c < MusECore::MAX_CHANNELS; ++c)
+  {
+    _levelAcc[c].peak.store(0.0, std::memory_order_relaxed);
+    _levelAcc[c].sumsq.store(0.0, std::memory_order_relaxed);
+  }
+  _levelFrames.store(0, std::memory_order_relaxed);
+  _levelMeasure.store(true, std::memory_order_relaxed);
+}
+
+//---------------------------------------------------------
+//   stopLevelMeasure
+//---------------------------------------------------------
+
+void AudioTrack::stopLevelMeasure(LevelMeasure& m)
+{
+  _levelMeasure.store(false, std::memory_order_relaxed);
+  m.frames = _levelFrames.load(std::memory_order_relaxed);
+  for(int c = 0; c < MusECore::MAX_CHANNELS; ++c)
+  {
+    m.peak[c] = _levelAcc[c].peak.load(std::memory_order_relaxed);
+    m.rms[c] = m.frames > 0 ? sqrt(_levelAcc[c].sumsq.load(std::memory_order_relaxed) / (double)m.frames) : 0.0;
+  }
+}
 
 //---------------------------------------------------------
 //   readAuxSend

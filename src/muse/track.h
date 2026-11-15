@@ -656,6 +656,18 @@ class AudioTrack : public Track {
       CtrlListList _controller;   // Holds all controllers including internal, plugin and synth.
       ControlFifo _controlFifo;   // For internal controllers like volume and pan. Plugins/synths have their own.
       CtrlRecList _recEvents;     // recorded automation events
+
+      // Level measurement over a time window (peak and RMS), see startLevelMeasure(). The audio thread
+      //  accumulates while _levelMeasure is set. Everything is relaxed atomics: A block may be lost when
+      //  starting or stopping, which does not matter for a measurement.
+      struct LevelAccum
+      {
+        std::atomic<double> peak{0.0};
+        std::atomic<double> sumsq{0.0};
+      };
+      std::atomic<bool> _levelMeasure{false};
+      std::atomic<uint64_t> _levelFrames{0};
+      LevelAccum _levelAcc[MusECore::MAX_CHANNELS];
       // Holds erased controller values, for recoverable dragging and dropping.
       CtrlListList _erasedController;
       // Holds controller values not to be erased while being copied, for dragging and dropping in copy mode.
@@ -770,6 +782,19 @@ class AudioTrack : public Track {
       float* const* cachedOutBuffers() const { return outBuffers; }
       // Waits until another thread has finished processing the track. Only for parallel processing.
       void waitDone() const;
+
+      // The result of a level measurement. The values are linear (1.0 is full scale).
+      struct LevelMeasure
+      {
+        double peak[MusECore::MAX_CHANNELS];   // The highest sample, per channel.
+        double rms[MusECore::MAX_CHANNELS];    // Root mean square, per channel.
+        uint64_t frames;                       // The number of frames measured. Zero if the track did not process.
+      };
+      // Starts measuring the level of the output of the track (the same signal as the meters show).
+      // Measuring costs a little in the audio thread, so stop it when done.
+      void startLevelMeasure();
+      // Stops measuring and returns what was measured since startLevelMeasure().
+      void stopLevelMeasure(LevelMeasure& m);
 
       // Adds a controller. Returns true if successful or false if error.
       // Note that it will fail if the controller already exists.

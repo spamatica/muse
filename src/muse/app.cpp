@@ -53,6 +53,8 @@
 #include <random>
 
 #include "mixerconfigdialog.h"
+#include "mcpdialog.h"
+#include "mcpserver.h"
 #include "app.h"
 #include "master/lmaster.h"
 #include "al/dsp.h"
@@ -118,6 +120,7 @@
 #include <QToolBar>
 //#include <QToolButton>
 #include <QProgressDialog>
+#include <QPointer>
 #include <QTimer>
 //#include <QMdiSubWindow>
 #include <QDockWidget>
@@ -883,6 +886,23 @@ MusE::MusE() : QMainWindow()
       rewindOnStopAction->setChecked(MusEGlobal::config.useRewindOnStop);
 
       settingsMetronomeAction = new QAction(*MusEGui::metronomeOnSVGIcon, tr("Metronome..."), this);
+      settingsMcpAction = new QAction(tr("MCP Server..."), this);
+      settingsMcpAction->setStatusTip(tr("Let an AI assistant look at the song and the mixer"));
+      mcpServer = new MusEGui::McpServer(this);
+      MusEGui::registerMcpTools(*mcpServer);
+      mcpIndicator = nullptr;
+      mcpIndicatorTimer = nullptr;
+      connect(mcpServer, &MusEGui::McpServer::statusChanged, this, [this]() { updateMcpIndicator(); });
+      connect(mcpServer, &MusEGui::McpServer::activity, this, [this]() { updateMcpIndicator(true); });
+      connect(settingsMcpAction, &QAction::triggered, [this]() {
+        // One window. The dialog deletes itself when closed.
+        static QPointer<MusEGui::McpDialog> dlg;
+        if(!dlg)
+          dlg = new MusEGui::McpDialog(mcpServer, this);
+        dlg->show();
+        dlg->raise();
+        dlg->activateWindow();
+      });
       settingsMidiSyncAction = new QAction(*MusEGui::midiSyncSVGIcon, tr("Midi Sync..."), this);
       settingsMidiIOAction = new QAction(*MusEGui::midiExportImportSVGIcon, tr("Midi File Import/Export..."), this);
       settingsMidiPortAction = new QAction(*MusEGui::ankerSVGIcon, tr("Midi Ports/Soft Synths..."), this);
@@ -958,6 +978,7 @@ MusE::MusE() : QMainWindow()
       connect(audioBounce2TrackAction, SIGNAL(triggered()), SLOT(bounceToTrack()));
       connect(audioBounce2FileAction, SIGNAL(triggered()), SLOT(bounceToFile()));
       connect(audioRestartAction, SIGNAL(triggered()), SLOT(seqRestart()));
+
 
       connect(audioSaveMixerConfigAction, &QAction::triggered, [this]() { MusEGui::saveMixerConfiguration(this); });
       connect(audioLoadMixerConfigAction, &QAction::triggered, [this]() { MusEGui::loadMixerConfiguration(this); });
@@ -1240,6 +1261,8 @@ MusE::MusE() : QMainWindow()
       follow->addActions(followAG->actions());
       menuSettings->addAction(rewindOnStopAction);
       menuSettings->addAction(settingsMetronomeAction);
+      menuSettings->addSeparator();
+      menuSettings->addAction(settingsMcpAction);
       menuSettings->addSeparator();
       menuSettings->addAction(settingsMidiSyncAction);
       menuSettings->addAction(settingsMidiIOAction);
@@ -6208,7 +6231,35 @@ void MusE::initStatusBar() {
             .arg(MusEGlobal::segmentCount);
     statusBar()->addWidget(new QLabel(s));
 
+    // Shows when the MCP server is running, and lights up when it is used.
+    mcpIndicator = new QLabel(statusBar());
+    mcpIndicator->setContentsMargins(6, 0, 6, 0);
+    mcpIndicatorTimer = new QTimer(this);
+    mcpIndicatorTimer->setSingleShot(true);
+    mcpIndicatorTimer->setInterval(1500);
+    connect(mcpIndicatorTimer, &QTimer::timeout, this, [this]() { updateMcpIndicator(); });
+    statusBar()->addPermanentWidget(mcpIndicator);
+    {
+      const MusEGui::McpSettings ms = MusEGui::McpSettings::load();
+      if(ms.enabled)
+        mcpServer->start(ms);
+    }
+    updateMcpIndicator();
+
     updateStatusBar();
+}
+
+void MusE::updateMcpIndicator(bool activity)
+{
+    if(!mcpIndicator)
+      return;
+    mcpIndicator->setVisible(mcpServer->isRunning());
+    if(!mcpServer->isRunning())
+      return;
+    mcpIndicator->setText(activity ? tr("MCP \u25CF") : tr("MCP"));
+    mcpIndicator->setToolTip(tr("The MCP server is running on 127.0.0.1:%1").arg(mcpServer->port()));
+    if(activity)
+      mcpIndicatorTimer->start();
 }
 
 void MusE::updateStatusBar() {

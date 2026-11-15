@@ -93,6 +93,8 @@ QT5_WRAP_CPP (components_mocs
       metronome.h  
       mixerconfig.h
       mixerconfigdialog.h
+      mcpdialog.h
+      mcpserver.h
       midi_audio_control.h  
       midisyncimpl.h  
       midi_warn_init_pending_impl.h
@@ -264,6 +266,9 @@ file (GLOB components_source_files
       metronome.cpp 
       mixerconfig.cpp
       mixerconfigdialog.cpp
+      mcpdialog.cpp
+      mcpserver.cpp
+      mcptools.cpp
       midi_audio_control.cpp 
       midisyncimpl.cpp 
       midi_warn_init_pending_impl.cpp
