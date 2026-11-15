@@ -114,13 +114,15 @@ check(body["error"]["code"] == -32601, "unknown method is -32601")
 status, body = rpc("tools/list")
 tools = {t["name"]: t for t in body["result"]["tools"]}
 READ_TOOLS = {"get_song_info", "get_transport", "list_tracks", "get_track", "list_parts", "get_levels", "measure_levels",
-              "list_audio_ports", "list_markers", "list_plugins", "list_synths", "list_plugin_presets", "get_midi_notes"}
+              "list_audio_ports", "list_markers", "list_plugins", "list_synths", "list_plugin_presets", "get_midi_notes",
+              "get_audio_part", "get_tempo_map", "get_drum_map"}
 CONTROL_TOOLS = {"transport", "set_position", "set_loop", "set_click", "set_track_mute", "set_track_solo",
                  "set_track_volume", "set_track_pan", "set_plugin_param", "set_plugin_on"}
 RECORD_TOOLS = {"set_track_record_arm", "record"}
 EDIT_TOOLS = {"add_track", "rename_track", "add_midi_part", "add_midi_notes", "move_part", "add_route", "remove_route",
               "undo", "redo", "add_plugin", "add_synth_track", "move_tracks_to_folder", "save_plugin_preset",
-              "load_plugin_preset", "modify_midi_notes", "delete_midi_notes"}
+              "load_plugin_preset", "modify_midi_notes", "delete_midi_notes", "set_tempo", "set_time_signature",
+              "set_tempo_map_enabled"}
 DANGEROUS_TOOLS = {"delete_track", "delete_part", "remove_plugin", "save_song"}
 
 check(READ_TOOLS <= set(tools), "tools/list has all the read tools (%d tools)" % len(tools))
@@ -221,6 +223,23 @@ r, err = result("list_plugin_presets", {"track": "no such track", "slot": 1})
 check(r is None and err["isError"], "list_plugin_presets with a wrong track is a tool error")
 r, err = result("get_midi_notes", {"track": "no such track", "part_start_tick": 0})
 check(r is None and err["isError"], "get_midi_notes with a wrong track is a tool error")
+
+r, err = result("get_audio_part", {"track": "no such track", "part_start_tick": 0})
+check(r is None and err["isError"], "get_audio_part with a wrong track is a tool error")
+r, err = result("get_drum_map", {"track": "no such track"})
+check(r is None and err["isError"], "get_drum_map with a wrong track is a tool error")
+tm, _ = result("get_tempo_map")
+check(tm is not None and len(tm["tempos"]) >= 1 and len(tm["timeSignatures"]) >= 1 and tm["tempos"][0]["bpm"] > 0
+      and tm["timeSignatures"][0]["numerator"] >= 1, "get_tempo_map has a tempo and a time signature")
+wave_parts = [p for p in (result("list_parts")[0] or {"parts": []})["parts"] if p.get("type") == "wave"]
+if wave_parts:
+    ap, _ = result("get_audio_part", {"track": wave_parts[0]["track"], "part_start_tick": wave_parts[0]["startTick"]})
+    check(ap is not None and len(ap["events"]) >= 1 and "lengthSeconds" in ap["events"][0], "get_audio_part of a wave part")
+    if ap and ap["events"] and ap["events"][0].get("file"):
+        e0 = ap["events"][0]
+        check(os.path.exists(e0["file"]) and e0["fileSampleRate"] > 0 and e0["channels"] >= 1, "the sound file exists (%s)" % e0["fileName"])
+else:
+    print("      no wave part in the song, get_audio_part is only tested for errors")
 
 # --- Helpers for the tiers that change things -------------------------------------------------------------
 PREFIX = "mcptest%d-" % os.getpid()
@@ -401,6 +420,54 @@ if has_edit:
         check(t is not None and not any(x["name"] == group_b["name"] for x in t["outRoutes"]), "the route is gone")
         check(fails("remove_route", {"from_track": group_a["name"], "to_track": group_b["name"]}), "remove_route of nothing is refused")
         check(fails("add_route", {"from_track": midi["name"] if midi else "x", "to_track": group_b["name"]}), "add_route needs audio tracks")
+
+    # Drum map, tempo and time signature.
+    drum = new_track("drum", "drum")
+    if drum:
+        r = ok("get_drum_map", {"track": drum["name"]})
+        check(r is not None and len(r["drums"]) >= 10 and all("pitch" in d and d["name"] for d in r["drums"]),
+              "get_drum_map lists the drums (%d)" % (len(r["drums"]) if r else 0))
+        if r:
+            print("      e.g. %s" % ", ".join("%d %s" % (d["pitch"], d["name"]) for d in r["drums"][:4]))
+    if midi:
+        check(fails("get_drum_map", {"track": midi["name"]}), "get_drum_map needs a drum track")
+
+    tm0 = result("get_tempo_map")[0]
+    r = ok("set_tempo", {"bpm": 97.5})
+    check(r is not None and abs(r["bpm"] - 97.5) < 0.05, "set_tempo")
+    tm1 = result("get_tempo_map")[0]
+    check(abs(tm1["tempos"][0]["bpm"] - 97.5) < 0.1 or abs(tm1["staticTempoBpm"] - 97.5) < 0.1, "the tempo is set")
+    check(fails("set_tempo", {"bpm": 5}), "set_tempo refuses a wrong value")
+    if not tm0["tempoMapEnabled"]:
+        check(fails("set_tempo", {"bpm": 90, "bar": 3}), "set_tempo later in the song needs the tempo map")
+    ok("undo")
+    tm2 = result("get_tempo_map")[0]
+    check(abs(tm2["tempos"][0]["bpm"] - tm0["tempos"][0]["bpm"]) < 0.05 and
+          abs(tm2["staticTempoBpm"] - tm0["staticTempoBpm"]) < 0.05, "undo puts the tempo back")
+
+    # Turning the tempo map on or off is not undoable: Put it back explicitly.
+    r = ok("set_tempo_map_enabled", {"enabled": not tm0["tempoMapEnabled"]})
+    check(r is not None and r["tempoMapEnabled"] == (not tm0["tempoMapEnabled"]), "set_tempo_map_enabled")
+    if r and r["tempoMapEnabled"]:
+        r = ok("set_tempo", {"bpm": 140, "bar": 5})
+        check(r is not None and r["tick"] > 0, "set_tempo at a bar")
+        tm3 = result("get_tempo_map")[0]
+        check(len(tm3["tempos"]) >= 2, "the tempo map has the tempo change")
+        ok("undo")
+    ok("set_tempo_map_enabled", {"enabled": tm0["tempoMapEnabled"]})
+    tm4 = result("get_tempo_map")[0]
+    check(tm4["tempoMapEnabled"] == tm0["tempoMapEnabled"] and len(tm4["tempos"]) == len(tm0["tempos"]),
+          "the tempo map is back as it was")
+
+    r = ok("set_time_signature", {"numerator": 3, "denominator": 4, "bar": 5})
+    check(r is not None and r["bar"] == 5, "set_time_signature")
+    tm5 = result("get_tempo_map")[0]
+    check(any(x["bar"] == 5 and x["numerator"] == 3 and x["denominator"] == 4 for x in tm5["timeSignatures"]),
+          "the time signature is in the tempo map")
+    check(fails("set_time_signature", {"numerator": 4, "denominator": 5}), "set_time_signature refuses a wrong denominator")
+    ok("undo")
+    tm6 = result("get_tempo_map")[0]
+    check(len(tm6["timeSignatures"]) == len(tm0["timeSignatures"]), "undo removes the time signature change")
 
 # --- Control tier ---------------------------------------------------------------------------------------
 if has_control:

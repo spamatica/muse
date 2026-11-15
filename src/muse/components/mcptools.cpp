@@ -37,6 +37,7 @@
 #include "globals.h"
 #include "marker/marker.h"
 #include "midiport.h"
+#include "midiedit/drummap.h"
 #include "synth.h"
 #include "instruments/minstrument.h"
 #include "part.h"
@@ -1084,6 +1085,169 @@ void registerMcpTools(McpServer& server)
       o["total"] = total;
       o["truncated"] = total > arr.size();
       o["notes"] = arr;
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+
+
+  //---------------------------------------------------------
+  //   get_audio_part
+  //---------------------------------------------------------
+  {
+    McpTool t;
+    t.name = "get_audio_part";
+    t.description = QObject::tr("The audio of a wave part: For each audio event the sound file (full path, so that it can be "
+                                "analysed with other tools), its sample rate, channels and length, and where in the file and in "
+                                "the song it plays. Part volume, fades and effects are not applied to the file.");
+    QJsonObject props;
+    props["track"] = prop("string", QObject::tr("Wave track name."));
+    props["part_start_tick"] = prop("integer", QObject::tr("Start tick of the part, from list_parts."));
+    t.inputSchema = schema(props, {"track", "part_start_tick"});
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Part* part = partFromArgs(args, "track", "part_start_tick", error);
+      if(!part)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      if(!part->track() || part->track()->type() != Track::WAVE)
+      {
+        done(QJsonObject(), QObject::tr("The part is not a wave part."));
+        return;
+      }
+      const double songRate = sampleRate();
+      const double partStartSec = tickToSeconds(part->tick());
+      QJsonArray evs;
+      for(ciEvent i = part->events().begin(); i != part->events().end(); ++i)
+      {
+        const Event& e = i->second;
+        if(e.type() != Wave)
+          continue;
+        QJsonObject o;
+        const SndFileR sf = e.sndFile();
+        if(sf.isNull())
+          o["file"] = QJsonValue();
+        else
+        {
+          o["file"] = sf.path();
+          o["fileName"] = sf.name();
+          o["fileSampleRate"] = sf.samplerate();
+          o["channels"] = sf.channels();
+          o["fileFrames"] = double(sf.samples());
+          o["fileSeconds"] = round4(sf.samplerate() > 0 ? double(sf.samples()) / sf.samplerate() : 0.0);
+          o["startOffsetInFileSeconds"] = round4(sf.samplerate() > 0 ? double(e.spos()) / sf.samplerate() : 0.0);
+        }
+        o["startOffsetInFileFrames"] = e.spos();
+        o["lengthFrames"] = double(e.lenFrame());
+        o["lengthSeconds"] = round4(double(e.lenFrame()) / songRate);
+        o["positionInPartFrames"] = double(e.frame());
+        o["positionInPartSeconds"] = round4(double(e.frame()) / songRate);
+        o["positionInSongSeconds"] = round4(partStartSec + double(e.frame()) / songRate);
+        evs.push_back(o);
+      }
+      QJsonObject o;
+      o["part"] = partJson(part);
+      o["songSampleRate"] = songRate;
+      o["events"] = evs;
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+
+  //---------------------------------------------------------
+  //   get_tempo_map
+  //---------------------------------------------------------
+  {
+    McpTool t;
+    t.name = "get_tempo_map";
+    t.description = QObject::tr("The tempo and time signature changes of the song. If the tempo map is off, the song has one "
+                                "static tempo (see set_tempo_map_enabled).");
+    t.inputSchema = schema();
+    t.handler = [](const QJsonObject&, McpDone done) {
+      QJsonObject o;
+      o["tempoMapEnabled"] = MusEGlobal::tempomap.masterFlag();
+      const int st = MusEGlobal::tempomap.staticTempo();
+      o["staticTempoBpm"] = round2(st > 0 ? 60000000.0 / st : 0.0);
+      // In these lists the key is the END of an item, and the item has its own start tick
+      //  (the last item is stored under a position past the end of the song).
+      QJsonArray tempos;
+      if(MusEGlobal::tempomap.masterFlag())
+      {
+        for(ciTEvent i = MusEGlobal::tempomap.begin(); i != MusEGlobal::tempomap.end(); ++i)
+        {
+          QJsonObject e = positionJson(i->second->tick);
+          e["bpm"] = round2(i->second->tempo > 0 ? 60000000.0 / i->second->tempo : 0.0);
+          tempos.push_back(e);
+        }
+      }
+      else
+      {
+        QJsonObject e = positionJson(0);
+        e["bpm"] = round2(st > 0 ? 60000000.0 / st : 0.0);
+        tempos.push_back(e);
+      }
+      o["tempos"] = tempos;
+      QJsonArray sigs;
+      for(ciSigEvent i = MusEGlobal::sigmap.begin(); i != MusEGlobal::sigmap.end(); ++i)
+      {
+        QJsonObject e = positionJson(i->second->tick);
+        e["numerator"] = i->second->sig.z;
+        e["denominator"] = i->second->sig.n;
+        sigs.push_back(e);
+      }
+      o["timeSignatures"] = sigs;
+      o["ticksPerQuarterNote"] = MusEGlobal::config.division;
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+
+  //---------------------------------------------------------
+  //   get_drum_map
+  //---------------------------------------------------------
+  {
+    McpTool t;
+    t.name = "get_drum_map";
+    t.description = QObject::tr("The drum map of a drum track: Which note (pitch) plays which drum. Use these pitches for "
+                                "the notes of the drum track. Hidden drums are left out unless include_hidden is set.");
+    QJsonObject props;
+    props["track"] = prop("string", QObject::tr("Drum track name."));
+    props["include_hidden"] = prop("boolean", QObject::tr("Also list the drums that are hidden in the editor."));
+    t.inputSchema = schema(props, {"track"});
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = trackFromArgs(args, false, error);
+      if(!tr)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      if(tr->type() != Track::DRUM)
+      {
+        done(QJsonObject(), QObject::tr("\"%1\" is not a drum track.").arg(tr->name()));
+        return;
+      }
+      const MidiTrack* mt = static_cast<const MidiTrack*>(tr);
+      const DrumMap* dm = mt->drummap();
+      const bool hidden = args.value("include_hidden").toBool();
+      QJsonArray arr;
+      for(int i = 0; i < 128; ++i)
+      {
+        if((dm[i].hide && !hidden) || dm[i].name.isEmpty())
+          continue;
+        QJsonObject o;
+        o["pitch"] = i;
+        o["name"] = dm[i].name;
+        o["mute"] = dm[i].mute;
+        o["hidden"] = dm[i].hide;
+        o["defaultLengthTicks"] = dm[i].len;
+        arr.push_back(o);
+      }
+      QJsonObject o;
+      o["track"] = tr->name();
+      o["drums"] = arr;
       done(o, QString());
     };
     server.addTool(t);
@@ -2373,6 +2537,86 @@ void registerMcpTools(McpServer& server)
       MusEGlobal::song->applyOperationGroup(group);
       QJsonObject o;
       o["erased"] = count;
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+
+
+  //---------------------------------------------------------
+  //   set_tempo / set_time_signature / set_tempo_map_enabled
+  //---------------------------------------------------------
+  {
+    McpTool t = controlTool("set_tempo",
+      QObject::tr("Sets the tempo from a position on (default the start of the song). Undoable. If the tempo map is off "
+                  "the song has one static tempo and only a tempo at the start can be set: Turn the tempo map on with "
+                  "set_tempo_map_enabled for tempo changes later in the song."),
+      schema({{"bpm", prop("number", QObject::tr("Beats (quarter notes) per minute, 20 to 400."))},
+              {"tick", prop("integer", QObject::tr("Position in ticks. 0 if left out."))},
+              {"bar", prop("integer", QObject::tr("Or the position as a bar number, the first bar is 1."))}}, {"bpm"}),
+      McpTierEdit);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      const double bpm = args.value("bpm").toDouble(0.0);
+      if(!(bpm >= 20.0 && bpm <= 400.0))
+      {
+        done(QJsonObject(), QObject::tr("bpm must be 20 to 400."));
+        return;
+      }
+      unsigned tick = 0;
+      if(args.contains("tick"))
+        tick = unsigned(qMax(0, args.value("tick").toInt()));
+      else if(args.contains("bar"))
+        tick = MusEGlobal::sigmap.bar2tick(qMax(1, args.value("bar").toInt()) - 1, 0, 0);
+      if(tick > 0 && !MusEGlobal::tempomap.masterFlag())
+      {
+        done(QJsonObject(), QObject::tr("The tempo map is off, so there is one static tempo. Use set_tempo_map_enabled first."));
+        return;
+      }
+      const int tempo = int(std::lround(60000000.0 / bpm));
+      MusEGlobal::song->applyOperation(UndoOp(UndoOp::SetTempo, int(tick), tempo));
+      QJsonObject o;
+      o["bpm"] = round2(60000000.0 / tempo);
+      o["tick"] = double(tick);
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("set_time_signature",
+      QObject::tr("Sets the time signature from a bar on. Undoable. Give the bar (the first is 1, the default)."),
+      schema({{"numerator", prop("integer", QObject::tr("Beats per bar, 1 to 63."))},
+              {"denominator", prop("integer", QObject::tr("Note value of a beat: 1, 2, 4, 8, 16, 32 or 64."))},
+              {"bar", prop("integer", QObject::tr("Bar number where it starts. 1 if left out."))}}, {"numerator", "denominator"}),
+      McpTierEdit);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      const int z = args.value("numerator").toInt(0);
+      const int n = args.value("denominator").toInt(0);
+      if(z < 1 || z > 63 || !(n == 1 || n == 2 || n == 4 || n == 8 || n == 16 || n == 32 || n == 64))
+      {
+        done(QJsonObject(), QObject::tr("The time signature is not valid."));
+        return;
+      }
+      const int bar = qMax(1, args.value("bar").toInt(1));
+      const unsigned tick = MusEGlobal::sigmap.bar2tick(bar - 1, 0, 0);
+      MusEGlobal::song->applyOperation(UndoOp(UndoOp::AddSig, int(tick), z, n));
+      QJsonObject o;
+      o["bar"] = bar;
+      o["numerator"] = z;
+      o["denominator"] = n;
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("set_tempo_map_enabled",
+      QObject::tr("Turns the tempo map on (the tempo can change during the song) or off (one static tempo for the whole "
+                  "song). Not undoable, like in the GUI."),
+      schema({{"enabled", prop("boolean", QObject::tr("true for the tempo map on."))}}, {"enabled"}),
+      McpTierEdit);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      MusEGlobal::song->setMasterFlag(args.value("enabled").toBool());
+      QJsonObject o;
+      o["tempoMapEnabled"] = MusEGlobal::tempomap.masterFlag();
       done(o, QString());
     };
     server.addTool(t);
