@@ -430,6 +430,25 @@ Part* PartList::findCloneMaster(const QUuid& cloneUuid) const
 //   Part
 //---------------------------------------------------------
 
+void Part::fillGain(float* gain, int64_t rel0, unsigned int n) const
+{
+  // Read the values once, they may change at any time.
+  const float vol = (float)volume();
+  const int64_t fade_in = fadeInFrames();
+  const int64_t fade_out = fadeOutFrames();
+  const int64_t part_len = lenFrame();
+  for(unsigned int j = 0; j < n; ++j)
+  {
+    const int64_t rel = rel0 + j;
+    float g = vol;
+    if(fade_in > 0 && rel < fade_in)
+      g *= rel <= 0 ? 0.0f : (float)rel / (float)fade_in;
+    if(fade_out > 0 && rel >= part_len - fade_out)
+      g *= rel >= part_len ? 0.0f : (float)(part_len - rel) / (float)fade_out;
+    gain[j] = g;
+  }
+}
+
 Part::Part(Track* t)
       {
       _hiddenEvents = NoEventsHidden;

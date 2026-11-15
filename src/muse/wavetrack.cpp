@@ -149,7 +149,7 @@ void WaveTrack::seekData(sf_count_t pos)
 //    called from prefetch thread
 //---------------------------------------------------------
 
-void WaveTrack::fetchData(unsigned pos, unsigned samples, float** bp, bool doSeek, bool overwrite, int latency_correction)
+void WaveTrack::fetchData(unsigned pos, unsigned samples, float** bp, bool doSeek, bool overwrite, int latency_correction, bool allPartGain)
       {
       WAVETRACK_DEBUG(stderr, "WaveTrack::fetchData %s samples:%u pos:%u overwrite:%d\n",
                       name().toLocal8Bit().constData(), samples, pos, overwrite);
@@ -233,16 +233,37 @@ void WaveTrack::fetchData(unsigned pos, unsigned samples, float** bp, bool doSee
                     for (int i = 0; i < channels(); ++i)
                           bpp[i] = bp[i] + dstOffset;
 
-                    const float part_gain = part->volume();
-                    const int64_t fade_in = part->fadeInFrames();
-                    const int64_t fade_out = part->fadeOutFrames();
-                    if(part_gain == 1.0f && fade_in == 0 && fade_out == 0)
+                    const bool has_gain = part->hasGain();
+                    // The frames of this read that another part also covers.
+                    // The gain of a part is normally applied when the audio is played, after the prefetch fifo, so that
+                    //  changes are heard at once (see mixPrefetchData). Where parts overlap the audio of the parts is
+                    //  already mixed in the fifo, so the gain of the overlapping parts has to be applied here.
+                    uint8_t overlapped[nn];
+                    bool any_overlap = false;
+                    if(has_gain && !allPartGain)
+                    {
+                      memset(overlapped, 0, nn);
+                      const int64_t abs0 = (int64_t)pos + dstOffset;
+                      for (iPart iq = pl->begin(); iq != pl->end(); ++iq) {
+                            const Part* other = iq->second;
+                            if (other == part || other->mute())
+                                continue;
+                            const int64_t lo = qMax((int64_t)other->frame(), abs0);
+                            const int64_t hi = qMin((int64_t)other->frame() + (int64_t)other->lenFrame(), abs0 + (int64_t)nn);
+                            for (int64_t f = lo; f < hi; ++f) {
+                                  overlapped[f - abs0] = 1;
+                                  any_overlap = true;
+                                  }
+                            }
+                    }
+
+                    if(!has_gain || (!allPartGain && !any_overlap))
                     {
                       event.readAudio(srcOffset, bpp, channels(), nn, doSeek, do_overwrite);
                     }
                     else
                     {
-                      // The part has its own volume. Read into a temporary buffer, then scale and add to the output.
+                      // Read into a temporary buffer, then scale and add to the output.
                       // The output has been cleared above if we are overwriting, so adding is the same as overwriting.
                       float tmp[channels()][nn];
                       memset(tmp, 0, sizeof(tmp));
@@ -250,30 +271,19 @@ void WaveTrack::fetchData(unsigned pos, unsigned samples, float** bp, bool doSee
                       for (int i = 0; i < channels(); ++i)
                             tmpp[i] = tmp[i];
                       event.readAudio(srcOffset, tmpp, channels(), nn, doSeek, true);
-                      if(fade_in == 0 && fade_out == 0)
+                      // The event frame is relative to the part and is negative if the part was trimmed from the left, so convert via int.
+                      // The position in the part follows the audio that was read.
+                      float gain[nn];
+                      part->fillGain(gain, (int64_t)(int)event.frame() + (int64_t)srcOffset, nn);
+                      if(!allPartGain)
                       {
-                        for (int i = 0; i < channels(); ++i)
-                              for (unsigned int j = 0; j < nn; ++j)
-                                    bpp[i][j] += tmp[i][j] * part_gain;
-                      }
-                      else
-                      {
-                        // Linear fades. The position in the part follows the audio that was read.
-                        const int64_t part_len = part->lenFrame();
-                        // The event frame is relative to the part and is negative if the part was trimmed from the left, so convert via int.
-                        const int64_t pos0 = (int64_t)(int)event.frame() + (int64_t)srcOffset;
                         for (unsigned int j = 0; j < nn; ++j)
-                        {
-                          const int64_t rel = pos0 + j;
-                          float g = part_gain;
-                          if(fade_in > 0 && rel < fade_in)
-                            g *= rel <= 0 ? 0.0f : (float)rel / (float)fade_in;
-                          if(fade_out > 0 && rel >= part_len - fade_out)
-                            g *= rel >= part_len ? 0.0f : (float)(part_len - rel) / (float)fade_out;
-                          for (int i = 0; i < channels(); ++i)
-                                bpp[i][j] += tmp[i][j] * g;
-                        }
+                              if(!overlapped[j])
+                                gain[j] = 1.0f;
                       }
+                      for (int i = 0; i < channels(); ++i)
+                            for (unsigned int j = 0; j < nn; ++j)
+                                  bpp[i][j] += tmp[i][j] * gain[j];
                     }
                     do_overwrite = false;
                     }
@@ -398,6 +408,84 @@ bool WaveTrack::closeAllParts()
   return closed;
 }
 
+//---------------------------------------------------------
+//   mixPrefetchData
+//    The volume and fades of the parts are applied here, when the audio is played, and not when it is
+//    prefetched, so that changes are heard at once and not only after the prefetched audio has been played.
+//    Frames that are covered by more than one part are not scaled here: The audio of the parts is mixed in
+//    the fifo, so the prefetch has scaled them (see fetchData).
+//---------------------------------------------------------
+
+void WaveTrack::mixPrefetchData(float** dst, float** src, int chans, unsigned frames, int64_t srcPos, bool overwrite) const
+{
+  const int64_t end_pos = srcPos + (int64_t)frames;
+  const PartList* pl = cparts();
+
+  // Is there a part with a volume or fades in this block? Most often not.
+  bool any = false;
+  for(ciPart ip = pl->cbegin(); ip != pl->cend(); ++ip)
+  {
+    const Part* part = ip->second;
+    if(part->mute() || !part->hasGain())
+      continue;
+    if((int64_t)part->frame() < end_pos && (int64_t)part->frame() + (int64_t)part->lenFrame() > srcPos)
+    {
+      any = true;
+      break;
+    }
+  }
+
+  if(!any)
+  {
+    for(int i = 0; i < chans; ++i)
+    {
+      if(overwrite)
+        AL::dsp->cpy(dst[i], src[i], frames, MusEGlobal::config.useDenormalBias);
+      else
+        AL::dsp->mix(dst[i], src[i], frames);
+    }
+    return;
+  }
+
+  float gain[frames];
+  uint8_t covered[frames];
+  for(unsigned int j = 0; j < frames; ++j)
+  {
+    gain[j] = 1.0f;
+    covered[j] = 0;
+  }
+  for(ciPart ip = pl->cbegin(); ip != pl->cend(); ++ip)
+  {
+    const Part* part = ip->second;
+    if(part->mute())
+      continue;
+    const int64_t lo = qMax((int64_t)part->frame(), srcPos);
+    const int64_t hi = qMin((int64_t)part->frame() + (int64_t)part->lenFrame(), end_pos);
+    if(lo >= hi)
+      continue;
+    const unsigned int off = lo - srcPos;
+    const unsigned int n = hi - lo;
+    // Where this is the only part, this is the gain that is used.
+    part->fillGain(gain + off, lo - (int64_t)part->frame(), n);
+    for(unsigned int j = 0; j < n; ++j)
+      ++covered[off + j];
+  }
+  for(unsigned int j = 0; j < frames; ++j)
+    if(covered[j] != 1)
+      gain[j] = 1.0f;
+
+  float tmp[frames];
+  for(int i = 0; i < chans; ++i)
+  {
+    for(unsigned int j = 0; j < frames; ++j)
+      tmp[j] = src[i][j] * gain[j];
+    if(overwrite)
+      AL::dsp->cpy(dst[i], tmp, frames, MusEGlobal::config.useDenormalBias);
+    else
+      AL::dsp->mix(dst[i], tmp, frames);
+  }
+}
+
 bool WaveTrack::getPrefetchData(
      sf_count_t framePos, int dstChannels, sf_count_t nframe, float** bp, bool do_overwrite)
 {
@@ -426,14 +514,14 @@ bool WaveTrack::getPrefetchData(
         // Set to the audio dummy buffer.
         pf_buf[i] = audioOutDummyBuf;
       // Indicate do not seek file before each read.
-      fetchData(framePos, nframe, pf_buf, false, do_overwrite, i_correction);
+      fetchData(framePos, nframe, pf_buf, false, do_overwrite, i_correction, true);
       return false;
     }
     else
     {
       // Not muted. Fetch the data into the given buffers.
       // Indicate do not seek file before each read.
-      fetchData(framePos, nframe, bp, false, do_overwrite, i_correction);
+      fetchData(framePos, nframe, bp, false, do_overwrite, i_correction, true);
       // We have data.
       return true;
     }
@@ -496,21 +584,15 @@ bool WaveTrack::getPrefetchData(
       {
         const unsigned blanks = pos - corr_frame_pos;
         const unsigned buf2_frames = nframe - blanks;
-        if(do_overwrite)
-        {
-          if(blanks != 0)
-          {
-            for(int i = 0; i < dstChannels; ++i)
-              AL::dsp->clear(bp[i], blanks, MusEGlobal::config.useDenormalBias);
-          }
-          for(int i = 0; i < dstChannels; ++i)
-            AL::dsp->cpy(bp[i] + blanks, pf_buf[i], buf2_frames, MusEGlobal::config.useDenormalBias);
-        }
-        else
+        if(do_overwrite && blanks != 0)
         {
           for(int i = 0; i < dstChannels; ++i)
-            AL::dsp->mix(bp[i] + blanks, pf_buf[i], buf2_frames);
+            AL::dsp->clear(bp[i], blanks, MusEGlobal::config.useDenormalBias);
         }
+        float* dst[dstChannels];
+        for(int i = 0; i < dstChannels; ++i)
+          dst[i] = bp[i] + blanks;
+        mixPrefetchData(dst, pf_buf, dstChannels, buf2_frames, pos, do_overwrite);
         // We have data.
         ret_val = true;
       }
@@ -530,16 +612,10 @@ bool WaveTrack::getPrefetchData(
       const unsigned buf2_frames = buf1_pos;
       if(!isMute())
       {
-        if(do_overwrite)
-        {
-          for(int i = 0; i < dstChannels; ++i)
-            AL::dsp->cpy(bp[i], pf_buf[i] + buf1_pos, buf1_frames, MusEGlobal::config.useDenormalBias);
-        }
-        else
-        {
-          for(int i = 0; i < dstChannels; ++i)
-            AL::dsp->mix(bp[i], pf_buf[i] + buf1_pos, buf1_frames);
-        }
+        float* src[dstChannels];
+        for(int i = 0; i < dstChannels; ++i)
+          src[i] = pf_buf[i] + buf1_pos;
+        mixPrefetchData(bp, src, dstChannels, buf1_frames, pos + buf1_pos, do_overwrite);
       }
 
       // Done with buffer, remove it.
@@ -565,16 +641,10 @@ bool WaveTrack::getPrefetchData(
 
       if(!isMute())
       {
-        if(do_overwrite)
-        {
-          for(int i = 0; i < dstChannels; ++i)
-            AL::dsp->cpy(bp[i] + buf2_pos, pf_buf[i], buf2_frames, MusEGlobal::config.useDenormalBias);
-        }
-        else
-        {
-          for(int i = 0; i < dstChannels; ++i)
-            AL::dsp->mix(bp[i] + buf2_pos, pf_buf[i], buf2_frames);
-        }
+        float* dst[dstChannels];
+        for(int i = 0; i < dstChannels; ++i)
+          dst[i] = bp[i] + buf2_pos;
+        mixPrefetchData(dst, pf_buf, dstChannels, buf2_frames, pos, do_overwrite);
         // We have data.
         ret_val = true;
       }        

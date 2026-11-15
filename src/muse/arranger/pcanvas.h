@@ -187,8 +187,8 @@ class PartCanvas : public Canvas {
 
       // Part fade in and fade out handles. Geometry is in device (mapped) coordinates.
       // Fills the part rectangle, the device x positions of the end of the fade in and the start of the fade out,
-      //  and the handle rectangles. Returns false if the item can not have fade handles.
-      bool partFadeGeometry(const CItem* item, unsigned int fadeIn, unsigned int fadeOut,
+      //  and the handle rectangles, which are where the fade lines meet the volume line of the given volume. Returns false if the item can not have fade handles.
+      bool partFadeGeometry(const CItem* item, double volume, unsigned int fadeIn, unsigned int fadeOut,
                             QRect& partRect, int& inX, int& outX, QRect& inHandle, QRect& outHandle) const;
       // Converts a device x position to a fade length in frames for the part, limited by the part length
       //  and the given length of the opposite fade.
