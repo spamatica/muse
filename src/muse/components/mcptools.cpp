@@ -36,7 +36,11 @@
 #include "gconfig.h"
 #include "globals.h"
 #include "marker/marker.h"
+#include "midi_consts.h"
+#include "midictrl.h"
+#include "midievent.h"
 #include "midiport.h"
+#include "popupmenu.h"
 #include "midiedit/drummap.h"
 #include "synth.h"
 #include "instruments/minstrument.h"
@@ -268,6 +272,13 @@ QJsonObject trackJson(const Track* t, bool detail)
     o["volume"] = round4(at->volume());
     o["volumeDb"] = round2(toDb(at->volume()));
     o["pan"] = round4(at->pan());
+    if(t->type() == Track::AUDIO_SOFTSYNTH)
+    {
+      // The midi port that sends to the synth. Midi tracks that play it have this port as their output.
+      for(int i = 0; i < MIDI_PORTS; ++i)
+        if(MusEGlobal::midiPorts[i].device() == static_cast<const MidiDevice*>(static_cast<const SynthI*>(t)))
+          o["midiPort"] = i + 1;
+    }
     int plugins = 0;
     for(int i = 0; i < PipelineDepth; ++i)
       if((*at->efxPipe())[i])
@@ -496,6 +507,68 @@ bool findNote(const Part* part, int tick, int pitch, const std::vector<Event>& u
     return true;
   }
   return false;
+}
+
+
+// Collects the patches of a popup menu, with the names of the sub menus as the group.
+void collectPatches(const QMenu* menu, const QString& group, QJsonArray& out, int limit, const QString& filter)
+{
+  for(const QAction* a : menu->actions())
+  {
+    if(a->isSeparator())
+      continue;
+    if(a->menu())
+    {
+      collectPatches(a->menu(), group.isEmpty() ? a->text() : group + " / " + a->text(), out, limit, filter);
+      continue;
+    }
+    if(out.size() >= limit || !(a->data().type() == QVariant::Int || a->data().type() == QVariant::UInt))
+      continue;
+    const int id = a->data().toInt();
+    if(id == -1)
+      continue;
+    if(!filter.isEmpty() && !a->text().contains(filter, Qt::CaseInsensitive) && !group.contains(filter, Qt::CaseInsensitive))
+      continue;
+    QJsonObject o;
+    o["name"] = a->text();
+    o["group"] = group;
+    o["patch"] = id;
+    const int hb = (id >> 16) & 0xff, lb = (id >> 8) & 0xff, pr = id & 0xff;
+    o["bankHigh"] = hb == 0xff ? QJsonValue() : QJsonValue(hb);
+    o["bankLow"] = lb == 0xff ? QJsonValue() : QJsonValue(lb);
+    o["program"] = pr == 0xff ? QJsonValue() : QJsonValue(pr);
+    out.push_back(o);
+  }
+}
+
+// The midi port and channel (0 based) that a midi track or a synth track sends to. False with error set.
+bool trackMidiOutput(Track* t, int channelArg, int& port, int& channel, QString& error)
+{
+  port = -1;
+  channel = qBound(1, channelArg, 16) - 1;
+  if(t->isMidiTrack())
+  {
+    port = static_cast<MidiTrack*>(t)->outPort();
+    if(channelArg <= 0)
+      channel = static_cast<MidiTrack*>(t)->outChannel();
+  }
+  else if(t->type() == Track::AUDIO_SOFTSYNTH)
+  {
+    for(int i = 0; i < MIDI_PORTS; ++i)
+      if(MusEGlobal::midiPorts[i].device() == static_cast<const MidiDevice*>(static_cast<SynthI*>(t)))
+        port = i;
+  }
+  else
+  {
+    error = QObject::tr("\"%1\" is not a midi track or a synth track.").arg(t->name());
+    return false;
+  }
+  if(port < 0 || port >= MIDI_PORTS)
+  {
+    error = QObject::tr("\"%1\" has no midi port.").arg(t->name());
+    return false;
+  }
+  return true;
 }
 
 // The audio tracks asked for by name, or all of them if there is no list. Sets error if a name is wrong.
@@ -1253,6 +1326,89 @@ void registerMcpTools(McpServer& server)
     server.addTool(t);
   }
 
+
+  //---------------------------------------------------------
+  //   list_midi_ports
+  //---------------------------------------------------------
+  {
+    McpTool t;
+    t.name = "list_midi_ports";
+    t.description = QObject::tr("The midi ports that have a device (a synth, or a hardware or software midi port), with the "
+                                "device and the instrument. A midi track plays on its output port; the port of a synth is also "
+                                "in get_track of the synth track.");
+    t.inputSchema = schema();
+    t.handler = [](const QJsonObject&, McpDone done) {
+      QJsonArray arr;
+      for(int i = 0; i < MIDI_PORTS; ++i)
+      {
+        const MidiPort* mp = &MusEGlobal::midiPorts[i];
+        if(!mp->device())
+          continue;
+        QJsonObject o;
+        o["port"] = i + 1;
+        o["device"] = mp->device()->name();
+        o["isSynth"] = mp->device()->isSynti();
+        o["instrument"] = mp->instrument() ? mp->instrument()->iname() : QString();
+        QJsonArray users;
+        for(const auto& mt : *MusEGlobal::song->midis())
+          if(mt->outPort() == i)
+            users.push_back(mt->name());
+        o["midiTracks"] = users;
+        arr.push_back(o);
+      }
+      QJsonObject o;
+      o["ports"] = arr;
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+
+  //---------------------------------------------------------
+  //   list_patches
+  //---------------------------------------------------------
+  {
+    McpTool t;
+    t.name = "list_patches";
+    t.description = QObject::tr("The patch (sound) names of the instrument that a midi track or a synth track plays on. "
+                                "Use the patch number with set_patch. For some synths the list is long: Use the filter.");
+    QJsonObject props;
+    props["track"] = prop("string", QObject::tr("Midi track or synth track name."));
+    props["channel"] = prop("integer", QObject::tr("Midi channel 1-16. The track's channel if left out (1 for a synth track)."));
+    props["filter"] = prop("string", QObject::tr("Case insensitive text that must be in the patch name or its group."));
+    props["limit"] = prop("integer", QObject::tr("The most patches to return, 1 to 2000. 300 if left out."));
+    t.inputSchema = schema(props, {"track"});
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = trackFromArgs(args, false, error);
+      int port, chan;
+      if(!tr || !trackMidiOutput(tr, args.value("channel").toInt(0), port, chan, error))
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      MidiInstrument* instr = MusEGlobal::midiPorts[port].instrument();
+      if(!instr)
+      {
+        done(QJsonObject(), QObject::tr("The port has no instrument."));
+        return;
+      }
+      const int limit = qBound(1, args.value("limit").toInt(300), 2000);
+      MusEGui::PopupMenu menu(false);
+      instr->populatePatchPopup(&menu, chan, tr->type() == Track::DRUM);
+      QJsonArray arr;
+      collectPatches(&menu, QString(), arr, limit, args.value("filter").toString().trimmed());
+      QJsonObject o;
+      o["track"] = tr->name();
+      o["port"] = port + 1;
+      o["channel"] = chan + 1;
+      o["instrument"] = instr->iname();
+      o["limited"] = arr.size() >= limit;
+      o["patches"] = arr;
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+
   //=========================================================
   //   Control tier
   //=========================================================
@@ -1554,6 +1710,71 @@ void registerMcpTools(McpServer& server)
       o["track"] = at->name();
       o["slot"] = slot + 1;
       o["on"] = at->efxPipe()->isOn(slot);
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+
+
+  //---------------------------------------------------------
+  //   set_patch
+  //---------------------------------------------------------
+  {
+    McpTool t = controlTool("set_patch",
+      QObject::tr("Selects a patch (sound) on the instrument that a midi track or synth track plays on, by sending a "
+                  "program change. Give the patch number from list_patches, or program with optional bank_high and bank_low."),
+      schema({{"track", prop("string", QObject::tr("Midi track or synth track name."))},
+              {"patch", prop("integer", QObject::tr("Patch number from list_patches."))},
+              {"program", prop("integer", QObject::tr("Program 0-127 (as program in list_patches)."))},
+              {"bank_high", prop("integer", QObject::tr("Bank 0-127, left out if the instrument has no banks."))},
+              {"bank_low", prop("integer", QObject::tr("Bank 0-127, left out if the instrument has no banks."))},
+              {"channel", prop("integer", QObject::tr("Midi channel 1-16. The track's channel if left out."))}}, {"track"}));
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = trackFromArgs(args, false, error);
+      int port, chan;
+      if(!tr || !trackMidiOutput(tr, args.value("channel").toInt(0), port, chan, error))
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      int id;
+      if(args.contains("patch"))
+        id = args.value("patch").toInt(-1);
+      else if(args.contains("program"))
+      {
+        const int pr = args.value("program").toInt(-1);
+        const int hb = args.contains("bank_high") ? args.value("bank_high").toInt(-1) : 0xff;
+        const int lb = args.contains("bank_low") ? args.value("bank_low").toInt(-1) : 0xff;
+        if(pr < 0 || pr > 127 || hb < 0 || (hb > 127 && hb != 0xff) || lb < 0 || (lb > 127 && lb != 0xff))
+        {
+          done(QJsonObject(), QObject::tr("program and banks must be 0-127."));
+          return;
+        }
+        id = (hb << 16) | (lb << 8) | pr;
+      }
+      else
+      {
+        done(QJsonObject(), QObject::tr("Give patch, or program."));
+        return;
+      }
+      if(id < 0 || id > 0xffffff)
+      {
+        done(QJsonObject(), QObject::tr("Not a valid patch number."));
+        return;
+      }
+      if(id == CTRL_PROGRAM_VAL_DONT_CARE)
+        id = 0xffff00;
+      MidiPort* mp = &MusEGlobal::midiPorts[port];
+      MidiPlayEvent ev(MusEGlobal::audio->curFrame(), port, chan, ME_CONTROLLER, CTRL_PROGRAM, id);
+      mp->putEvent(ev);
+      QJsonObject o;
+      o["track"] = tr->name();
+      o["port"] = port + 1;
+      o["channel"] = chan + 1;
+      o["patch"] = id;
+      if(mp->instrument())
+        o["name"] = mp->instrument()->getPatchName(chan, id, tr->type() == Track::DRUM, false);
       done(o, QString());
     };
     server.addTool(t);
@@ -2617,6 +2838,55 @@ void registerMcpTools(McpServer& server)
       MusEGlobal::song->setMasterFlag(args.value("enabled").toBool());
       QJsonObject o;
       o["tempoMapEnabled"] = MusEGlobal::tempomap.masterFlag();
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+
+
+  //---------------------------------------------------------
+  //   set_midi_track_output
+  //---------------------------------------------------------
+  {
+    McpTool t = controlTool("set_midi_track_output",
+      QObject::tr("Sets the midi port and channel that a midi or drum track plays on, for example the port of a synth "
+                  "(see list_midi_ports and get_track of the synth track). Not undoable, like in the GUI."),
+      schema({{"track", prop("string", QObject::tr("Midi or drum track name."))},
+              {"port", prop("integer", QObject::tr("Midi port number, from list_midi_ports."))},
+              {"channel", prop("integer", QObject::tr("Midi channel 1-16. Left as it is if left out."))}}, {"track", "port"}),
+      McpTierEdit);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = trackFromArgs(args, false, error);
+      if(!tr)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      if(!tr->isMidiTrack())
+      {
+        done(QJsonObject(), QObject::tr("\"%1\" is not a midi or drum track.").arg(tr->name()));
+        return;
+      }
+      MidiTrack* mt = static_cast<MidiTrack*>(tr);
+      const int port = args.value("port").toInt(0) - 1;
+      const int chan = args.contains("channel") ? args.value("channel").toInt(0) - 1 : mt->outChannel();
+      if(port < 0 || port >= MIDI_PORTS || chan < 0 || chan >= MUSE_MIDI_CHANNELS)
+      {
+        done(QJsonObject(), QObject::tr("The port must be 1 to %1 and the channel 1 to 16.").arg(int(MIDI_PORTS)));
+        return;
+      }
+      // Like the GUI does it.
+      MusEGlobal::audio->msgIdle(true);
+      const MidiTrack::ChangedType_t changed = mt->setOutPortAndChannelAndUpdate(port, chan, false);
+      MusEGlobal::audio->msgIdle(false);
+      MusEGlobal::audio->msgUpdateSoloStates();
+      MusEGlobal::song->update(SC_ROUTE | ((changed & MidiTrack::DrumMapChanged) ? SC_DRUMMAP : 0));
+      MusEGlobal::audio->msgInitMidiDevices(false);
+      QJsonObject o;
+      o["track"] = mt->name();
+      o["port"] = mt->outPort() + 1;
+      o["channel"] = mt->outChannel() + 1;
       done(o, QString());
     };
     server.addTool(t);

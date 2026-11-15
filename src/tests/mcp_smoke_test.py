@@ -115,14 +115,14 @@ status, body = rpc("tools/list")
 tools = {t["name"]: t for t in body["result"]["tools"]}
 READ_TOOLS = {"get_song_info", "get_transport", "list_tracks", "get_track", "list_parts", "get_levels", "measure_levels",
               "list_audio_ports", "list_markers", "list_plugins", "list_synths", "list_plugin_presets", "get_midi_notes",
-              "get_audio_part", "get_tempo_map", "get_drum_map"}
-CONTROL_TOOLS = {"transport", "set_position", "set_loop", "set_click", "set_track_mute", "set_track_solo",
+              "get_audio_part", "get_tempo_map", "get_drum_map", "list_midi_ports", "list_patches"}
+CONTROL_TOOLS = {"set_patch", "transport", "set_position", "set_loop", "set_click", "set_track_mute", "set_track_solo",
                  "set_track_volume", "set_track_pan", "set_plugin_param", "set_plugin_on"}
 RECORD_TOOLS = {"set_track_record_arm", "record"}
 EDIT_TOOLS = {"add_track", "rename_track", "add_midi_part", "add_midi_notes", "move_part", "add_route", "remove_route",
               "undo", "redo", "add_plugin", "add_synth_track", "move_tracks_to_folder", "save_plugin_preset",
               "load_plugin_preset", "modify_midi_notes", "delete_midi_notes", "set_tempo", "set_time_signature",
-              "set_tempo_map_enabled"}
+              "set_tempo_map_enabled", "set_midi_track_output"}
 DANGEROUS_TOOLS = {"delete_track", "delete_part", "remove_plugin", "save_song"}
 
 check(READ_TOOLS <= set(tools), "tools/list has all the read tools (%d tools)" % len(tools))
@@ -240,6 +240,11 @@ if wave_parts:
         check(os.path.exists(e0["file"]) and e0["fileSampleRate"] > 0 and e0["channels"] >= 1, "the sound file exists (%s)" % e0["fileName"])
 else:
     print("      no wave part in the song, get_audio_part is only tested for errors")
+
+r, _ = result("list_midi_ports")
+check(r is not None and isinstance(r["ports"], list) and all("device" in p and "instrument" in p for p in r["ports"]), "list_midi_ports")
+r, err = result("list_patches", {"track": "no such track"})
+check(r is None and err["isError"], "list_patches with a wrong track is a tool error")
 
 # --- Helpers for the tiers that change things -------------------------------------------------------------
 PREFIX = "mcptest%d-" % os.getpid()
@@ -459,15 +464,41 @@ if has_edit:
     check(tm4["tempoMapEnabled"] == tm0["tempoMapEnabled"] and len(tm4["tempos"]) == len(tm0["tempos"]),
           "the tempo map is back as it was")
 
-    r = ok("set_time_signature", {"numerator": 3, "denominator": 4, "bar": 5})
+    # A signature that differs from the one in effect: The same one would not be a change.
+    cur = tm0["timeSignatures"][-1]
+    num, den = (5, 8) if (cur["numerator"], cur["denominator"]) != (5, 8) else (7, 8)
+    r = ok("set_time_signature", {"numerator": num, "denominator": den, "bar": 5})
     check(r is not None and r["bar"] == 5, "set_time_signature")
     tm5 = result("get_tempo_map")[0]
-    check(any(x["bar"] == 5 and x["numerator"] == 3 and x["denominator"] == 4 for x in tm5["timeSignatures"]),
+    check(any(x["bar"] == 5 and x["numerator"] == num and x["denominator"] == den for x in tm5["timeSignatures"]),
           "the time signature is in the tempo map")
     check(fails("set_time_signature", {"numerator": 4, "denominator": 5}), "set_time_signature refuses a wrong denominator")
     ok("undo")
     tm6 = result("get_tempo_map")[0]
     check(len(tm6["timeSignatures"]) == len(tm0["timeSignatures"]), "undo removes the time signature change")
+
+    # Midi ports, patches and track output.
+    if midi:
+        before = track_info(midi["name"])
+        r = ok("list_patches", {"track": midi["name"], "limit": 20})
+        check(r is not None and r["instrument"] and isinstance(r["patches"], list), "list_patches of a midi track")
+        if r and r["patches"]:
+            p0 = r["patches"][0]
+            check(all(k in p0 for k in ("name", "group", "patch", "program")), "a patch has name, group and number")
+            r2 = ok("list_patches", {"track": midi["name"], "filter": p0["name"].split()[-1][:4], "limit": 5})
+            check(r2 is not None and len(r2["patches"]) >= 1, "list_patches filter")
+            r3 = ok("set_patch", {"track": midi["name"], "patch": p0["patch"]})
+            check(r3 is not None and r3["patch"] == p0["patch"], "set_patch")
+        check(fails("set_patch", {"track": midi["name"]}), "set_patch needs a patch or a program")
+        check(fails("set_patch", {"track": midi["name"], "program": 200}), "set_patch refuses a wrong program")
+        check(fails("list_patches", {"track": group_a["name"] if group_a else "x"}), "list_patches needs a midi or synth track")
+        r = ok("set_midi_track_output", {"track": midi["name"], "port": before["midiPort"], "channel": 3})
+        check(r is not None and r["channel"] == 3, "set_midi_track_output")
+        t = track_info(midi["name"])
+        check(t is not None and t["midiChannel"] == 3, "the track plays on channel 3")
+        ok("set_midi_track_output", {"track": midi["name"], "port": before["midiPort"], "channel": before["midiChannel"]})
+        check(fails("set_midi_track_output", {"track": midi["name"], "port": 9999}), "set_midi_track_output refuses a wrong port")
+        check(fails("set_midi_track_output", {"track": group_a["name"] if group_a else "x", "port": 1}), "set_midi_track_output needs a midi track")
 
 # --- Control tier ---------------------------------------------------------------------------------------
 if has_control:
@@ -613,6 +644,12 @@ if has_edit and group_a:
         check(r is not None and r["type"] == "synth" and r["name"] == PREFIX + "synth", "add_synth_track (%s)" % sy["name"])
         if r:
             scratch.append(r["name"])
+            t = track_info(r["name"])
+            check(t is not None and t.get("midiPort", 0) >= 1, "a synth track shows its midi port")
+            ports = ok("list_midi_ports")
+            check(ports is not None and any(p["device"] == r["name"] and p["isSynth"] for p in ports["ports"]), "list_midi_ports lists the synth")
+            pr = ok("list_patches", {"track": r["name"], "limit": 5})
+            check(pr is not None and isinstance(pr["patches"], list), "list_patches of a synth track (%d)" % (len(pr["patches"]) if pr else 0))
     check(fails("add_synth_track", {"label": "no-such-synth-label"}), "add_synth_track with an unknown synth is refused")
 
 # --- Record tier ----------------------------------------------------------------------------------------
