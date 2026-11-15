@@ -25,6 +25,7 @@
 #ifndef __PART_H__
 #define __PART_H__
 
+#include <atomic>
 #include <map> 
 #include <vector>
 #include <climits>
@@ -137,10 +138,12 @@ class Part : public PosLen {
       bool _mute;
       int _colorIndex;
       // Linear gain of the part, 1.0 is 0 dB. Currently only used by wave parts.
-      double _volume;
+      // The volume and the fades can change while the audio is playing (a handle being dragged),
+      //  and are applied by the audio thread when the audio is played, so they are atomic.
+      std::atomic<double> _volume;
       // Fade in and out lengths in frames. Currently only used by wave parts.
-      unsigned int _fadeInFrames;
-      unsigned int _fadeOutFrames;
+      std::atomic<unsigned int> _fadeInFrames;
+      std::atomic<unsigned int> _fadeOutFrames;
                    
    protected:
       Track* _track;
@@ -185,13 +188,18 @@ class Part : public PosLen {
       int colorIndex() const           { return _colorIndex; }
       void setColorIndex(int idx)      { _colorIndex = idx; }
       // Linear gain of the part, 1.0 (0 dB) by default.
-      double volume() const            { return _volume; }
-      void setVolume(double v)         { _volume = v; }
+      double volume() const            { return _volume.load(std::memory_order_relaxed); }
+      void setVolume(double v)         { _volume.store(v, std::memory_order_relaxed); }
       // Length of the fade in and fade out of the part, in frames. Zero means no fade.
-      unsigned int fadeInFrames() const   { return _fadeInFrames; }
-      void setFadeInFrames(unsigned int f)  { _fadeInFrames = f; }
-      unsigned int fadeOutFrames() const  { return _fadeOutFrames; }
-      void setFadeOutFrames(unsigned int f) { _fadeOutFrames = f; }
+      unsigned int fadeInFrames() const   { return _fadeInFrames.load(std::memory_order_relaxed); }
+      void setFadeInFrames(unsigned int f)  { _fadeInFrames.store(f, std::memory_order_relaxed); }
+      unsigned int fadeOutFrames() const  { return _fadeOutFrames.load(std::memory_order_relaxed); }
+      void setFadeOutFrames(unsigned int f) { _fadeOutFrames.store(f, std::memory_order_relaxed); }
+      // Whether the volume or a fade is not the default, so that the audio of the part must be scaled.
+      bool hasGain() const { return volume() != 1.0 || fadeInFrames() != 0 || fadeOutFrames() != 0; }
+      // Fills gain[0..n) with the gain (volume and linear fades) of the frames starting at the frame rel0
+      //  relative to the start of the part. rel0 may be negative if the part was trimmed from the left.
+      void fillGain(float* gain, int64_t rel0, unsigned int n) const;
       
       bool isCloneOf(const Part*) const;
       bool hasClones() const           { return _prevClone!=this || _nextClone!=this; }

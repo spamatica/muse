@@ -1169,7 +1169,12 @@ class WaveTrack : public AudioTrack {
 
       // Called from prefetch thread:
       // If overwrite is true, copies the data. If false, adds the data.
-      virtual void fetchData(unsigned pos, unsigned frames, float** bp, bool doSeek, bool overwrite, int latency_correction = 0);
+      // allPartGain: Apply the volume and fades of all parts. Otherwise they are applied when the audio is played
+      //  from the prefetch fifo (see mixPrefetchData), except where parts overlap.
+      virtual void fetchData(unsigned pos, unsigned frames, float** bp, bool doSeek, bool overwrite, int latency_correction = 0, bool allPartGain = false);
+      // Copies or mixes (overwrite or not) frames of one block of the prefetch fifo to the buffers, applying the
+      //  volume and fades of the parts. srcPos is the position of the first frame in the song.
+      void mixPrefetchData(float** dst, float** src, int channels, unsigned frames, int64_t srcPos, bool overwrite) const;
       
       virtual void seekData(sf_count_t pos);
       
