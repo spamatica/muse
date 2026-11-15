@@ -41,6 +41,7 @@
 #include "driver/jackmidi.h"
 #include "driver/alsamidi.h"
 #include <algorithm>
+#include <set>
 #include "song.h"
 //#include "key.h"
 #include "globals.h"
@@ -6959,17 +6960,47 @@ void Song::dragMoveTrack(Track* dragged, Track* target)
     return;
   const bool down = dest > from;
 
-  if(dragged->isFolderTrack())
+  // What moves: All selected tracks if the dragged track is one of them, otherwise only the dragged track.
+  // A folder always moves with its tracks.
+  std::set<Track*> moving;
+  const bool all_selected = dragged->selected();
+  for(Track* t : to.order)
   {
-    // Folders are not in folders: A track in a folder stands for its folder.
+    if(all_selected ? t->selected() : (t == dragged))
+    {
+      moving.insert(t);
+      if(t->isFolderTrack())
+        for(Track* m : to.order)
+          if(m->folder() == t)
+            moving.insert(m);
+    }
+  }
+  // Dropped on one of the tracks that move, or on a folder that moves: Nothing to do.
+  if(moving.count(target) || (target->folder() && moving.count(target->folder())))
+    return;
+
+  std::vector<Track*> moved;
+  bool has_folder = false;
+  for(Track* t : to.order)
+    if(moving.count(t))
+    {
+      moved.push_back(t);
+      if(t->isFolderTrack())
+        has_folder = true;
+    }
+  to.order.erase(std::remove_if(to.order.begin(), to.order.end(),
+                                [&moving](Track* t) { return moving.count(t) != 0; }), to.order.end());
+
+  if(has_folder)
+  {
+    // Folders are not in folders: A track in a folder stands for its folder. Tracks that move with the
+    //  folders and are not in a moving folder come out of their folder.
     Track* tgt = target->folder() ? static_cast<Track*>(target->folder()) : target;
-    if(tgt == dragged)
-      return;
-    const int end = to.blockEnd(from);
-    const std::vector<Track*> block(to.order.begin() + from, to.order.begin() + end);
-    to.order.erase(to.order.begin() + from, to.order.begin() + end);
     const int ti = to.indexOf(tgt);
-    to.order.insert(to.order.begin() + (down ? to.blockEnd(ti) : ti), block.begin(), block.end());
+    to.order.insert(to.order.begin() + (down ? to.blockEnd(ti) : ti), moved.begin(), moved.end());
+    for(Track* t : moved)
+      if(!t->folder() || !moving.count(t->folder()))
+        to.inFolder[t] = nullptr;
   }
   else
   {
@@ -6983,12 +7014,12 @@ void Song::dragMoveTrack(Track* dragged, Track* target)
     else if(target->folder())
       new_folder = target->folder();
 
-    to.order.erase(to.order.begin() + from);
     const int ti = to.indexOf(target);
-    // On a folder: As its last track. Otherwise to the place of the target.
+    // On a folder: As its last tracks. Otherwise to the place of the target.
     const int ins = in_folder_block ? to.blockEnd(ti) : (down ? ti + 1 : ti);
-    to.order.insert(to.order.begin() + ins, dragged);
-    to.inFolder[dragged] = new_folder;
+    to.order.insert(to.order.begin() + ins, moved.begin(), moved.end());
+    for(Track* t : moved)
+      to.inFolder[t] = new_folder;
   }
   applyTrackOrder(to.order, to.inFolder);
 }

@@ -94,6 +94,9 @@ class TList : public QWidget {
       QPixmap bgPixmap;       // background Pixmap
       bool resizeFlag;        // true if resize cursor is shown
       bool addTrackOpened = false;
+      // A press on a selected track changes the selection when released, if the tracks were not dragged.
+      MusECore::Track* _clickSelectOnly = nullptr;   // Select only this track.
+      MusECore::Track* _clickDeselect = nullptr;     // Deselect this track (control).
 
       Header* header;
       QScrollBar* _scroll;
