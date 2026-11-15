@@ -1739,7 +1739,7 @@ MusECore::TrackList TList::getRecEnabledTracks()
 
 void TList::changeAutomation(QAction* act)
 {
-    if(!editAutomation || editAutomation->isMidiTrack())
+    if(!editAutomation || !editAutomation->isAudioTrack())
         return;
 
     if (act->data().toInt() == AUTO_INVALID)
@@ -1813,7 +1813,7 @@ void TList::changeAutomation(QAction* act)
 //---------------------------------------------------------
 void TList::changeAutomationColor(QAction* act)
 {
-    if(!editAutomation || editAutomation->isMidiTrack())
+    if(!editAutomation || !editAutomation->isAudioTrack())
         return;
     if(act->data().toInt() == AUTO_INVALID)
         return;
@@ -2030,7 +2030,7 @@ PopupMenu* TList::colorMenu(QColor c, int id, QWidget* parent)
 
     m->addAction(new MenuTitleItem(tr("Midi control"), m));
 
-    if(editAutomation && !editAutomation->isMidiTrack())
+    if(editAutomation && editAutomation->isAudioTrack())
     {
         QAction *act = m->addAction(tr("Assign"));
         act->setCheckable(false);
@@ -2110,6 +2110,8 @@ void TList::mousePressEvent(QMouseEvent* ev)
     const bool shift  = ((QInputEvent*)ev)->modifiers() & Qt::ShiftModifier;
 
     MusECore::Track* t    = y2Track(y + ypos);
+    _clickSelectOnly = nullptr;
+    _clickDeselect = nullptr;
 
     if (t == nullptr) {
         if (button == Qt::RightButton) {
@@ -2202,7 +2204,12 @@ void TList::mousePressEvent(QMouseEvent* ev)
             if (tracks->countSelected() == 1 && tracks->currentSelection() == t)
                 return;
 
-            t->setSelected(!t->selected());
+            // Deselecting a selected track waits until the button is released without a drag,
+            //  so that the selected tracks can be dragged by one of them.
+            if (t->selected())
+                _clickDeselect = t;
+            else
+                t->setSelected(true);
         }
 
         else if (shift) {
@@ -2239,6 +2246,10 @@ void TList::mousePressEvent(QMouseEvent* ev)
                 t->setSelected(true);
             }
 
+        } else if (t->selected() && tracks->countSelected() > 1) {
+            // Only that track is selected when the button is released without a drag,
+            //  so that the selected tracks can be dragged by one of them.
+            _clickSelectOnly = t;
         } else {
 
             MusEGlobal::song->selectAllTracks(false);
@@ -3398,6 +3409,8 @@ void TList::mouseMoveEvent(QMouseEvent* ev)
             mode = NORMAL;
         else {
             mode = DRAG;
+            _clickSelectOnly = nullptr;
+            _clickDeselect = nullptr;
             dragHeight = t->height();
             sTrack     = MusEGlobal::song->tracks()->index(t);
             setCursor(QCursor(Qt::SizeVerCursor));
@@ -3607,6 +3620,22 @@ void TList::mouseReleaseEvent(QMouseEvent* ev)
         }
       }
     }
+
+    // A click, not a drag, on a selected track: Now change the selection.
+    if (mode != DRAG) {
+        MusECore::Track* sel_only = _clickSelectOnly;
+        MusECore::Track* desel = _clickDeselect;
+        _clickSelectOnly = nullptr;
+        _clickDeselect = nullptr;
+        if (sel_only && MusEGlobal::song->trackExists(sel_only))
+            selectTrack(sel_only);
+        else if (desel && MusEGlobal::song->trackExists(desel)) {
+            desel->setSelected(false);
+            MusEGlobal::song->update(SC_TRACK_SELECTION);
+        }
+    }
+    _clickSelectOnly = nullptr;
+    _clickDeselect = nullptr;
 
     if (mode != NORMAL) {
         mode = NORMAL;

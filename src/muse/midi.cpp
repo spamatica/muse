@@ -1771,7 +1771,7 @@ void Audio::processMidi(unsigned int frames)
                   {
                     case MidiAudioCtrlStruct::AudioControl:
                     {
-                      if(macs_track && !macs_track->isMidiTrack())
+                      if(macs_track && macs_track->isAudioTrack())
                       {
                         // Call the helper function.
                         processMidiToAudioControl(macs_track, id, macs, ev_t, rec_t, ctl, val, playing);
@@ -1781,7 +1781,7 @@ void Audio::processMidi(unsigned int frames)
                         for(iTrack itl = tl->begin(); itl != tl->end(); ++itl)
                         {
                           Track* track = *itl;
-                          if(track && track->selected() && !track->isMidiTrack())
+                          if(track && track->selected() && track->isAudioTrack())
                           {
                             // Call the helper function.
                             processMidiToAudioControl(track, id, macs, ev_t, rec_t, ctl, val, playing);
