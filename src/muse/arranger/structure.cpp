@@ -267,7 +267,7 @@ void globalInsert(bool onlySelectedTracks)
 
 void adjustAutomation(Undo &operations, Track *track, unsigned int lpos, unsigned int rpos, OperationType type)
 {
-  if (!track->isMidiTrack())
+  if (track->isAudioTrack())
   {
     auto *audioTrack = static_cast<AudioTrack *>(track);
     auto controllerListList = audioTrack->controller();
