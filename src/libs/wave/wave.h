@@ -152,8 +152,15 @@ class SndFile {
       static AudioConverterPluginList* _pluginList;
       static AudioConverterSettingsGroup** _defaultSettings;
       static int _systemSampleRate;
+      // Whether a file whose sample rate differs from the system rate is converted. If false such a file is
+      //  treated as if it had the system rate, which means it plays at the wrong speed and pitch.
+      // Only files that are opened afterwards are affected.
+      static bool _sampleRateConversionEnabled;
       static int _segSize;
       static SndFileList* _sndFiles;
+
+      static void setSampleRateConversionEnabled(bool v) { _sampleRateConversionEnabled = v; }
+      static bool sampleRateConversionEnabled() { return _sampleRateConversionEnabled; }
 
       static void initWaveModule(
         SndFileList* sndFiles,
