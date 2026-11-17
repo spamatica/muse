@@ -47,6 +47,7 @@
 #include "cobject.h"
 
 #include "song.h"
+#include "wave.h"
 #include "operations.h"
 #include "audio.h"
 #include "audioparallel.h"
@@ -519,6 +520,7 @@ void GlobalSettingsConfig::updateSettings()
       minSliderSelect->setValue(int(MusEGlobal::config.minSlider));
       minMeterSelect->setValue(MusEGlobal::config.minMeter);
       freewheelCheckBox->setChecked(MusEGlobal::config.freewheelMode);
+      enableSampleRateConversionCheckBox->setChecked(MusEGlobal::config.enableSampleRateConversion);
       denormalCheckBox->setChecked(MusEGlobal::config.useDenormalBias);
       outputLimiterCheckBox->setChecked(MusEGlobal::config.useOutputLimiter);
       vstInPlaceCheckBox->setChecked(MusEGlobal::config.vstInPlace);
@@ -665,6 +667,9 @@ void GlobalSettingsConfig::apply()
       MusEGlobal::config.minSlider   = minSliderSelect->value();
       MusEGlobal::config.minMeter    = minMeterSelect->value();
       MusEGlobal::config.freewheelMode = freewheelCheckBox->isChecked();
+      MusEGlobal::config.enableSampleRateConversion = enableSampleRateConversionCheckBox->isChecked();
+      // Files that are opened from now on use the new setting.
+      MusECore::SndFile::setSampleRateConversionEnabled(MusEGlobal::config.enableSampleRateConversion);
       MusEGlobal::config.useDenormalBias = denormalCheckBox->isChecked();
       MusEGlobal::config.useOutputLimiter = outputLimiterCheckBox->isChecked();
       MusEGlobal::config.vstInPlace  = vstInPlaceCheckBox->isChecked();
