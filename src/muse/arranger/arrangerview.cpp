@@ -925,6 +925,17 @@ void ArrangerView::updateScoreMenus()
     }
 }
 
+// The action of the given track type (QAction::data()) in the group made by MusEGui::populateAddTrack().
+// Do not use the position in the group: It changes when entries are added to the menu (as the folder was),
+//  and the shortcuts would end up on the wrong entries.
+static QAction* trackActionOfType(QActionGroup* group, MusECore::Track::TrackType type)
+{
+  for(QAction* a : group->actions())
+    if(a->data().toInt() == int(type))
+      return a;
+  return nullptr;
+}
+
 // populate both add and insert menus with track types
 void ArrangerView::populateAddTrack()
 {
@@ -932,15 +943,14 @@ void ArrangerView::populateAddTrack()
     addTrack->clear();
     QActionGroup *addGroup = MusEGui::populateAddTrack(addTrack, true, false, false);
 
-    int idx = 0;
-    trackAMidiAction   = addGroup->actions().at(idx++);
-    trackADrumAction   = addGroup->actions().at(idx++);
-    trackAWaveAction   = addGroup->actions().at(idx++);
-    trackAOutputAction = addGroup->actions().at(idx++);
-    trackAGroupAction  = addGroup->actions().at(idx++);
-    trackAInputAction  = addGroup->actions().at(idx++);
-    trackAAuxAction    = addGroup->actions().at(idx++);
-    trackASynthAction  = addGroup->actions().at(idx++);
+    trackAMidiAction   = trackActionOfType(addGroup, MusECore::Track::MIDI);
+    trackADrumAction   = trackActionOfType(addGroup, MusECore::Track::DRUM);
+    trackAWaveAction   = trackActionOfType(addGroup, MusECore::Track::WAVE);
+    trackAOutputAction = trackActionOfType(addGroup, MusECore::Track::AUDIO_OUTPUT);
+    trackAGroupAction  = trackActionOfType(addGroup, MusECore::Track::AUDIO_GROUP);
+    trackAInputAction  = trackActionOfType(addGroup, MusECore::Track::AUDIO_INPUT);
+    trackAAuxAction    = trackActionOfType(addGroup, MusECore::Track::AUDIO_AUX);
+    trackASynthAction  = trackActionOfType(addGroup, MusECore::Track::AUDIO_SOFTSYNTH);
 
     trackAMidiAction->setShortcutContext(Qt::ApplicationShortcut);
     trackADrumAction->setShortcutContext(Qt::ApplicationShortcut);
@@ -955,15 +965,14 @@ void ArrangerView::populateAddTrack()
     insertTrack->clear();
     QActionGroup *insertGroup = MusEGui::populateAddTrack(insertTrack, true, true, false);
 
-    idx = 0;
-    trackIMidiAction   = insertGroup->actions().at(idx++);
-    trackIDrumAction   = insertGroup->actions().at(idx++);
-    trackIWaveAction   = insertGroup->actions().at(idx++);
-    trackIOutputAction = insertGroup->actions().at(idx++);
-    trackIGroupAction  = insertGroup->actions().at(idx++);
-    trackIInputAction  = insertGroup->actions().at(idx++);
-    trackIAuxAction    = insertGroup->actions().at(idx++);
-    trackISynthAction  = insertGroup->actions().at(idx++);
+    trackIMidiAction   = trackActionOfType(insertGroup, MusECore::Track::MIDI);
+    trackIDrumAction   = trackActionOfType(insertGroup, MusECore::Track::DRUM);
+    trackIWaveAction   = trackActionOfType(insertGroup, MusECore::Track::WAVE);
+    trackIOutputAction = trackActionOfType(insertGroup, MusECore::Track::AUDIO_OUTPUT);
+    trackIGroupAction  = trackActionOfType(insertGroup, MusECore::Track::AUDIO_GROUP);
+    trackIInputAction  = trackActionOfType(insertGroup, MusECore::Track::AUDIO_INPUT);
+    trackIAuxAction    = trackActionOfType(insertGroup, MusECore::Track::AUDIO_AUX);
+    trackISynthAction  = trackActionOfType(insertGroup, MusECore::Track::AUDIO_SOFTSYNTH);
 
     trackIMidiAction->setShortcutContext(Qt::ApplicationShortcut);
     trackIDrumAction->setShortcutContext(Qt::ApplicationShortcut);
