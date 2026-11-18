@@ -1525,6 +1525,8 @@ QActionGroup* populateAddTrack(QMenu* addTrack, bool populateAll, bool insert, b
       QAction* afolder = addTrack->addAction(*trackFolderSVGIcon,
                                              qApp->translate("@default", QT_TRANSLATE_NOOP("@default", "Folder")));
       afolder->setData(MusECore::Track::FOLDER);
+      if (addkey)
+          afolder->setText(afolder->text() + "\t" + QKeySequence(shortcuts[insert ? SHRT_INSERT_FOLDER_TRACK : SHRT_ADD_FOLDER_TRACK].key).toString());
       grp->addAction(afolder);
 
       if (populateAll || MusECore::SynthI::visible()) {

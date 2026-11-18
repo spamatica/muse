@@ -950,6 +950,7 @@ void ArrangerView::populateAddTrack()
     trackAGroupAction  = trackActionOfType(addGroup, MusECore::Track::AUDIO_GROUP);
     trackAInputAction  = trackActionOfType(addGroup, MusECore::Track::AUDIO_INPUT);
     trackAAuxAction    = trackActionOfType(addGroup, MusECore::Track::AUDIO_AUX);
+    trackAFolderAction = trackActionOfType(addGroup, MusECore::Track::FOLDER);
     trackASynthAction  = trackActionOfType(addGroup, MusECore::Track::AUDIO_SOFTSYNTH);
 
     trackAMidiAction->setShortcutContext(Qt::ApplicationShortcut);
@@ -959,6 +960,7 @@ void ArrangerView::populateAddTrack()
     trackAGroupAction->setShortcutContext(Qt::ApplicationShortcut);
     trackAInputAction->setShortcutContext(Qt::ApplicationShortcut);
     trackAAuxAction->setShortcutContext(Qt::ApplicationShortcut);
+    trackAFolderAction->setShortcutContext(Qt::ApplicationShortcut);
     trackASynthAction->setShortcutContext(Qt::ApplicationShortcut);
 
     // populate insert track menu
@@ -972,6 +974,7 @@ void ArrangerView::populateAddTrack()
     trackIGroupAction  = trackActionOfType(insertGroup, MusECore::Track::AUDIO_GROUP);
     trackIInputAction  = trackActionOfType(insertGroup, MusECore::Track::AUDIO_INPUT);
     trackIAuxAction    = trackActionOfType(insertGroup, MusECore::Track::AUDIO_AUX);
+    trackIFolderAction = trackActionOfType(insertGroup, MusECore::Track::FOLDER);
     trackISynthAction  = trackActionOfType(insertGroup, MusECore::Track::AUDIO_SOFTSYNTH);
 
     trackIMidiAction->setShortcutContext(Qt::ApplicationShortcut);
@@ -981,6 +984,7 @@ void ArrangerView::populateAddTrack()
     trackIGroupAction->setShortcutContext(Qt::ApplicationShortcut);
     trackIInputAction->setShortcutContext(Qt::ApplicationShortcut);
     trackIAuxAction->setShortcutContext(Qt::ApplicationShortcut);
+    trackIFolderAction->setShortcutContext(Qt::ApplicationShortcut);
     trackISynthAction->setShortcutContext(Qt::ApplicationShortcut);
 }
 
@@ -1025,6 +1029,7 @@ void ArrangerView::updateShortcuts()
       trackAGroupAction->setShortcut(shortcuts[SHRT_ADD_AUDIO_GROUP].key);
       trackAInputAction->setShortcut(shortcuts[SHRT_ADD_AUDIO_INPUT].key);
       trackAAuxAction->setShortcut(shortcuts[SHRT_ADD_AUDIO_AUX].key);
+      trackAFolderAction->setShortcut(shortcuts[SHRT_ADD_FOLDER_TRACK].key);
       trackASynthAction->setShortcut(shortcuts[SHRT_ADD_SYNTH_TRACK].key);
 
       trackIMidiAction->setShortcut(shortcuts[SHRT_INSERT_MIDI_TRACK].key);
@@ -1034,6 +1039,7 @@ void ArrangerView::updateShortcuts()
       trackIGroupAction->setShortcut(shortcuts[SHRT_INSERT_AUDIO_GROUP].key);
       trackIInputAction->setShortcut(shortcuts[SHRT_INSERT_AUDIO_INPUT].key);
       trackIAuxAction->setShortcut(shortcuts[SHRT_INSERT_AUDIO_AUX].key);
+      trackIFolderAction->setShortcut(shortcuts[SHRT_INSERT_FOLDER_TRACK].key);
       trackISynthAction->setShortcut(shortcuts[SHRT_INSERT_SYNTH_TRACK].key);
 
 
