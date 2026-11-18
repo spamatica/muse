@@ -1607,6 +1607,9 @@ int main(int argc, char* argv[])
         MusEGlobal::fifoLength = 131072 / MusEGlobal::segmentSize;
         MusECore::initAudioPrefetch();
 
+        // Whether files with another sample rate than the system rate are converted.
+        MusECore::SndFile::setSampleRateConversionEnabled(MusEGlobal::config.enableSampleRateConversion);
+
         // Set up the wave module now that sampleRate and segmentSize are known.
         MusECore::SndFile::initWaveModule(
           &MusEGlobal::sndFiles,

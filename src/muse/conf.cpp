@@ -1344,6 +1344,8 @@ void readConfiguration(Xml& xml, bool doReadMidiPortConfig, bool doReadGlobalCon
                               MusEGlobal::config.audioThreads = xml.parseInt();
                         else if (tag == "audioThreadsAuto")
                               MusEGlobal::config.audioThreadsAuto = xml.parseInt();
+                        else if (tag == "enableSampleRateConversion")
+                              MusEGlobal::config.enableSampleRateConversion = xml.parseInt();
                         else if (tag == "deviceAudioSampleRate")
                               MusEGlobal::config.deviceAudioSampleRate = xml.parseInt();
                         else if (tag == "deviceAudioBufSize")
@@ -2076,6 +2078,7 @@ void MusE::writeGlobalConfiguration(int level, MusECore::Xml& xml) const
       xml.intTag(level, "audioThreadsAuto", MusEGlobal::config.audioThreadsAuto);
 
       xml.intTag(level, "deviceAudioBufSize", MusEGlobal::config.deviceAudioBufSize);
+      xml.intTag(level, "enableSampleRateConversion", MusEGlobal::config.enableSampleRateConversion);
       xml.intTag(level, "deviceAudioSampleRate", MusEGlobal::config.deviceAudioSampleRate);
       xml.intTag(level, "deviceAudioBackend", MusEGlobal::config.deviceAudioBackend);
       xml.strTag(level, "deviceAudioAlsaDevice", MusEGlobal::config.deviceAudioAlsaDevice);

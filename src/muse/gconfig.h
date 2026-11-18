@@ -376,6 +376,7 @@ struct GlobalConfigValues {
       bool vstInPlace; // Enable VST in-place processing
       int audioThreads; // Threads for processing the audio tracks in parallel, including the audio thread. 0 or 1 = off. (audioparallel.h)
       bool audioThreadsAuto; // Measure and use the parallel processing only while it is faster.
+      bool enableSampleRateConversion; // Convert wave files whose sample rate differs from the system rate (live or offline). If off they are used as they are.
       int deviceAudioSampleRate;
       int deviceAudioBufSize;
       int deviceAudioBackend;
