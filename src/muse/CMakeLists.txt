@@ -69,6 +69,7 @@ QT5_WRAP_CPP ( muse_moc_headers
       rasterizer.h
       scripts.h
       song.h
+      stemexport.h
       transport.h
       value.h
       steprec.h
@@ -154,6 +155,8 @@ file (GLOB core_source_files
       song.cpp
       songfile.cpp
       songfile_discovery.cpp
+      stemcapture.cpp
+      stemexport.cpp
       stringparam.cpp
       sync.cpp
       synth.cpp

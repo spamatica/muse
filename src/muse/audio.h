@@ -27,6 +27,7 @@
 
 #include <stdint.h>
 #include <atomic>
+#include <mutex>
 
 #include "type_defs.h"
 #include "thread.h"
@@ -46,6 +47,7 @@ class MidiPort;
 class MidiTrack;
 class Part;
 class PluginI;
+class StemCapture;
 class SynthI;
 class Track;
 class Undo;
@@ -127,6 +129,10 @@ class Audio {
       BounceState _bounceState;
       bool _bounceEndFrameValid = false; // Use _freezeEndFrame as the end of a bounce to file instead of the right marker.
       unsigned _freezeEndFrame; // Used instead of the right marker while Song::freezeTrack is set.
+      // Stem export: renders the output of some tracks to a file while bouncing. See stemcapture.h.
+      std::atomic<StemCapture*> _stemCapture;
+      // Held while the stem capture writes to its file, and while it is removed.
+      std::mutex _stemMutex;
       unsigned _loopFrame;     // Startframe of loop if in LOOP mode. Not quite the same as left marker !
       int _loopCount;         // Number of times we have looped so far
 
@@ -306,6 +312,10 @@ class Audio {
       //  right marker. Call clearBounceEndFrame() when the pass is done.
       void setBounceEndFrame(unsigned f) { _freezeEndFrame = f; _bounceEndFrameValid = true; }
       void clearBounceEndFrame() { _bounceEndFrameValid = false; }
+      // GUI thread, transport stopped. Installs a stem capture, or removes it (nullptr), waiting
+      //  until the audio and prefetch threads are done with the previous one. Does not delete it.
+      void setStemCapture(StemCapture* sc);
+      bool stemCaptureActive() const { return _stemCapture.load(std::memory_order_acquire) != nullptr; }
       void msgClearControllerEvents(AudioTrack*, int);
       void msgSeekPrevACEvent(AudioTrack*, int);
       void msgSeekNextACEvent(AudioTrack*, int);

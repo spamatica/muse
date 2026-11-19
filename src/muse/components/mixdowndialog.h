@@ -29,6 +29,7 @@
 #include "ui_mixdowndialogbase.h"
 
 class QWidget;
+class QComboBox;
 
 namespace MusECore {
 class SndFile;
@@ -81,6 +82,8 @@ class MixdownFileDialog : public QDialog, public Ui::MixdownFileDialogBase {
 
    public:
       MixdownFileDialog(QWidget* parent, const QString& suggestedDir, const QString& suggestedName);
+      // Fills the combo box with the output formats, and 'formats' with their libsndfile format of each row.
+      static void fillFormats(QComboBox* combo, QList<int>& formats);
       const MusECore::MixdownSettings& settings() const { return _settings; }
       };
 

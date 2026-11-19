@@ -197,6 +197,7 @@ enum {
 
     SHRT_AUDIO_BOUNCE_TO_TRACK, //Default: undefined
     SHRT_AUDIO_BOUNCE_TO_FILE, //Default: undefined
+    SHRT_AUDIO_EXPORT_STEMS, //Default: undefined
     SHRT_AUDIO_RESTART, //Default: undefined
 
     // REMOVE Tim. automation.

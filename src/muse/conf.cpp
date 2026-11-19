@@ -1427,6 +1427,14 @@ void readConfiguration(Xml& xml, bool doReadMidiPortConfig, bool doReadGlobalCon
                               MusEGlobal::config.mixdownChannels = xml.parseInt();
                         else if (tag == "mixdownQuality")
                               MusEGlobal::config.mixdownQuality = xml.parseInt();
+                        else if (tag == "stemMode")
+                              MusEGlobal::config.stemMode = xml.parseInt();
+                        else if (tag == "stemFormat")
+                              MusEGlobal::config.stemFormat = xml.parseInt();
+                        else if (tag == "stemChannels")
+                              MusEGlobal::config.stemChannels = xml.parseInt();
+                        else if (tag == "stemQuality")
+                              MusEGlobal::config.stemQuality = xml.parseInt();
                         else if (tag == "showNoteNamesInPianoRoll")
                               MusEGlobal::config.showNoteNamesInPianoRoll = xml.parseInt();
                         else if (tag == "showNoteTooltips")
@@ -2179,6 +2187,10 @@ void MusE::writeGlobalConfiguration(int level, MusECore::Xml& xml) const
       xml.intTag(level, "mixdownFormat", MusEGlobal::config.mixdownFormat);
       xml.intTag(level, "mixdownChannels", MusEGlobal::config.mixdownChannels);
       xml.intTag(level, "mixdownQuality", MusEGlobal::config.mixdownQuality);
+      xml.intTag(level, "stemMode", MusEGlobal::config.stemMode);
+      xml.intTag(level, "stemFormat", MusEGlobal::config.stemFormat);
+      xml.intTag(level, "stemChannels", MusEGlobal::config.stemChannels);
+      xml.intTag(level, "stemQuality", MusEGlobal::config.stemQuality);
       xml.intTag(level, "showNoteNamesInPianoRoll", MusEGlobal::config.showNoteNamesInPianoRoll);
       xml.intTag(level, "showNoteTooltips", MusEGlobal::config.showNoteTooltips);
       xml.intTag(level, "showTimeScaleBeatNumbers", MusEGlobal::config.showTimeScaleBeatNumbers);

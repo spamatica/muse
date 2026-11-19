@@ -187,6 +187,7 @@ void initShortCuts()
 
       defShrt(SHRT_AUDIO_BOUNCE_TO_TRACK, 0, QT_TRANSLATE_NOOP("shortcuts", "Audio: Bounce audio to track"), ARRANG_SHRT, "audio_bounce_to_track");
       defShrt(SHRT_AUDIO_BOUNCE_TO_FILE,  0, QT_TRANSLATE_NOOP("shortcuts", "Audio: Bounce audio to file"), ARRANG_SHRT, "audio_bounce_to_file");
+      defShrt(SHRT_AUDIO_EXPORT_STEMS,    0, QT_TRANSLATE_NOOP("shortcuts", "Audio: Export stems"), ARRANG_SHRT, "audio_export_stems");
       defShrt(SHRT_AUDIO_RESTART,         0, QT_TRANSLATE_NOOP("shortcuts", "Audio: Restart audio"), ARRANG_SHRT, "audio_restart");
 
 // REMOVE Tim. automation. Removed.

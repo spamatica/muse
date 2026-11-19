@@ -398,6 +398,10 @@ GlobalConfigValues config = {
       0x010002,                     // mixdownFormat (SF_FORMAT_WAV | SF_FORMAT_PCM_16)
       0,                            // mixdownChannels
       4,                            // mixdownQuality
+      0,                            // stemMode
+      0x010002,                     // stemFormat (SF_FORMAT_WAV | SF_FORMAT_PCM_16)
+      0,                            // stemChannels
+      4,                            // stemQuality
       true,                         // showNoteNamesInPianoRoll
       true,                         // showNoteTooltips
       true,                         // showTimeScaleBeatNumbers

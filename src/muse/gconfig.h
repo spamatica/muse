@@ -435,6 +435,10 @@ struct GlobalConfigValues {
       int mixdownFormat;    // Downmix dialog: libsndfile format.
       int mixdownChannels;  // Downmix dialog: index of the channels choice.
       int mixdownQuality;   // Downmix dialog: compressed format quality 0 - 10.
+      int stemMode;         // Stem export dialog: 0 = range markers, 1 = markers.
+      int stemFormat;       // Stem export dialog: libsndfile format.
+      int stemChannels;     // Stem export dialog: index of the channels choice.
+      int stemQuality;      // Stem export dialog: compressed format quality 0 - 10.
       bool showNoteNamesInPianoRoll;
       bool showNoteTooltips;
       bool showTimeScaleBeatNumbers;
