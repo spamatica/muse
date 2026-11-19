@@ -91,9 +91,9 @@ private:
     QAction *strGlobalCutAction, *strGlobalInsertAction, *strGlobalSplitAction;
     QAction *strGlobalCutSelAction, *strGlobalInsertSelAction, *strGlobalSplitSelAction;
     QAction *trackAMidiAction, *trackADrumAction, *trackAWaveAction, *trackAOutputAction, *trackAGroupAction;
-    QAction *trackAInputAction, *trackAAuxAction, *trackASynthAction;
+    QAction *trackAInputAction, *trackAAuxAction, *trackAFolderAction, *trackASynthAction;
     QAction *trackIMidiAction, *trackIDrumAction, *trackIWaveAction, *trackIOutputAction, *trackIGroupAction;
-    QAction *trackIInputAction, *trackIAuxAction, *trackISynthAction;
+    QAction *trackIInputAction, *trackIAuxAction, *trackIFolderAction, *trackISynthAction;
 
     QAction *editDeleteAction,*editCutAction, *editCopyAction, *editCopyRangeAction;
     QAction *editPasteAction, *editPasteCloneAction, *editPasteToTrackAction, *editPasteCloneToTrackAction, *editPasteDialogAction;

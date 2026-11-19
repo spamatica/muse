@@ -211,7 +211,9 @@ void MarkerMixdown::poll()
   if(_running)
   {
     // Done when the transport has stopped and the recording has been wrapped up by the GUI thread.
-    if(!MusEGlobal::audio->bounce() && !MusEGlobal::audio->isPlaying() && MusEGlobal::song->bounceOutput == nullptr)
+    // Also wait for freewheel mode to be off again, so that the next mixdown starts from a settled transport.
+    if(!MusEGlobal::audio->bounce() && !MusEGlobal::audio->isPlaying() && MusEGlobal::song->bounceOutput == nullptr &&
+       !MusEGlobal::audio->freewheel())
     {
       _running = false;
       MusEGlobal::audio->clearBounceEndFrame();

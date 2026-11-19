@@ -7,6 +7,39 @@ in vst3/, steps 3, 5 and 6 are in MusE itself. Step 7 (polish) is partly done: o
 buses, sidechain and the note id / note expression layer. What is left is listed there.
 
 
+GETTING THE VST3 SDK AND BUILDING
+---------------------------------
+
+  VST3 support is optional (ENABLE_VST3, default OFF) and needs a source checkout of the
+  Steinberg VST3 SDK, 3.8 or later. It is not part of this repository and not a submodule.
+
+  The SDK repository consists of git submodules, so a plain clone has empty folders.
+  Of them MusE needs base, cmake, pluginterfaces and public.sdk (not vstgui4, doc, tutorials):
+
+    git clone --branch v3.8.1_build_84 https://github.com/steinbergmedia/vst3sdk ~/dev/vst3sdk
+    cd ~/dev/vst3sdk
+    git submodule update --init base cmake pluginterfaces public.sdk
+
+  (Leave out --branch for the newest SDK. "git clone --recurse-submodules" works too, it just
+  also fetches the parts that are not needed.)
+
+  Then build MusE with VST3, in a build folder:
+
+    cmake -DCMAKE_BUILD_TYPE=release -DMODULES_BUILD_STATIC=ON -DENABLE_VST3=ON \
+          -DVST3_SDK_PATH=$HOME/dev/vst3sdk ..
+    make -j$(nproc)
+
+  The SDK is compiled as part of the build. If VST3_SDK_PATH does not point to a complete
+  checkout, cmake says "VST3 support disabled: ..." and builds MusE without VST3.
+
+  The stand-alone host in vst3/ (see TRYING STEP 1) finds the SDK in ~/dev/vst3sdk by default.
+
+  Distribution packages are not enough: Debian/Ubuntu's libvst3sdk-dev (SDK 3.7, GPLv3) has
+  the headers and prebuilt libraries, but no CMake project and not the Linux plugin loader
+  (public.sdk/source/vst/hosting/module_linux.cpp), plugprovider.cpp and memorystream.cpp,
+  which the build compiles from the SDK sources.
+
+
 FINDINGS
 --------
 
@@ -16,8 +49,9 @@ License
   problems. Keep the SDK copyright and license text when bundling it.
 
 SDK on Linux (verified by building and running it, SDK 3.8.1)
-  * CMake based. The SDK repo needs the vstgui4 submodule only when VSTGUI is enabled;
-    we turn it off (SMTG_ENABLE_VSTGUI_SUPPORT=OFF) and build no examples.
+  * CMake based. The SDK repo is made of submodules; base, cmake, pluginterfaces and
+    public.sdk are needed, vstgui4 only when VSTGUI is enabled. We turn VSTGUI off
+    (SMTG_ENABLE_VSTGUI_SUPPORT=OFF) and build no examples.
   * The hosting code is in public.sdk/source/vst/hosting: Module (loads .vst3 bundles and
     reads the factory), PlugProvider (creates component + controller and connects them),
     HostApplication, EventList, ParameterChanges, ProcessData, pluginterfacesupport.
@@ -274,6 +308,15 @@ Notes from step 2
     timer and a file descriptor. Both are served by the Qt event loop.
   * The plugin's editor must be closed (view removed, frame cleared) before the plugin
     instance is destroyed. Editor::closeView() does that, the Editor destructor too.
+  * Some plugins follow XEmbed: their window inside ours has _XEMBED_INFO with the
+    XEMBED_MAPPED flag and stays unmapped (a blank editor) until the host maps it
+    (MT-PowerDrumKit, VSTGUI). Editor::open() maps such windows, also a moment later.
+  * Some plugins write to all their output buses, active or not (MT-PowerDrumKit has 8).
+    Inactive buses get spare buffers, with null pointers such a plugin crashed.
+  * The stand-alone tests take the first instrument found. With MT-PowerDrumKit in ~/.vst3
+    that is a drum kit that is silent until it is set up in its GUI, so set
+    VST3_TEST_INSTRUMENT, to an instrument whose pitch follows the pitch bend (see
+    "Pick plugins like these" below).
   * Screenshots with QScreen::grabWindow are black for XWayland windows, so the tests check
     the X window tree instead (XQueryTree) rather than pixels.
   * The synthetic click test depends on the compositor delivering XTest input. When it is
@@ -317,11 +360,21 @@ TRYING STEP 1
   ./build/vst3gui "Surge XT"                       # opens the editor, hold the button to play C4
   ./build/vst3gui Diva --seconds 10 --wav /tmp/gui.wav
 
-  Get the SDK:  git clone --recurse-submodules https://github.com/steinbergmedia/vst3sdk
-  (the submodule is not needed, since VSTGUI is switched off; plain clone is enough).
+  Get the SDK as described in GETTING THE VST3 SDK AND BUILDING at the top.
 
   Tests use the plugins found in the standard locations. Environment variables:
     VST3_TEST_DIRS=dir1:dir2        where to look
     VST3_TEST_INSTRUMENT=name       instrument to test with (default: the first found)
     VST3_TEST_EFFECT=name           effect to test with (default: the first found)
   Without any installed plugin the tests report "skipped".
+
+  No plugins of your own: build the SDK's example plugins (no editors, VSTGUI is off, so the
+  GUI tests can not use them; the link into ~/.vst3 is switched off):
+    cmake -S ~/dev/vst3sdk -B sdkbuild -DCMAKE_BUILD_TYPE=Release -DSMTG_ENABLE_VSTGUI_SUPPORT=OFF \
+          -DSMTG_CREATE_PLUGIN_LINK=OFF -DSMTG_RUN_VST_VALIDATOR=OFF
+    cmake --build sdkbuild --target mda-vst3 adelay -j
+    VST3_TEST_DIRS=$PWD/sdkbuild/VST3/Release VST3_TEST_EFFECT="mda Ambience" \
+      VST3_TEST_INSTRUMENT="mda JX10" ctest --test-dir build -R '^vst3_tests$' --output-on-failure
+  Pick plugins like these: the tests need an effect with a continuous parameter and an
+  instrument whose pitch follows the pitch bend (ADelay and mda DX10, found first, are not).
+  MusE finds them with VST3_PATH=$PWD/sdkbuild/VST3/Release.

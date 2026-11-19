@@ -22,7 +22,7 @@ make install               # prefix is set by -DCMAKE_INSTALL_PREFIX (the script
 - Feature toggles are CMake options in [CMakeLists.txt](CMakeLists.txt) (`ENABLE_ALSA`, `ENABLE_PIPEWIRE`, `ENABLE_RTAUDIO`, `ENABLE_LV2`, `ENABLE_VST_NATIVE`, `ENABLE_DSSI`, `ENABLE_OSC`, `ENABLE_FLUID`, `ENABLE_RUBBERBAND`, `ENABLE_PYTHON`, etc.). JACK is a core dependency. Each option wraps code in `#ifdef` guarded by a matching define in `config.h.in`.
 - `MODULES_BUILD_STATIC=ON` links the internal modules (muse/ subdirectories, `libs/`, `al`, `awl`, ...) statically; the default is OFF (shared).
 - Qt5 only (Widgets, Core, UiTools, LinguistTools, Xml, Svg). Dialogs/widgets are largely `.ui` files compiled via uic.
-- VST3 (work in progress, see [README.vst3](README.vst3)): `-DENABLE_VST3=ON -DVST3_SDK_PATH=<vst3sdk checkout>` (default OFF). Plugin scanning and VST3 effects work (`muse/vst3.cpp`; bundles are scanned in the `muse_plugin_scan` sandbox; both use the host code in `vst3/`); VST3 instruments (synth tracks) work too. `vst3/` also builds stand-alone with its own tests (`ctest` there), and `ctest -R vst3_cache` runs the cache test from the MusE build dir.
+- VST3 (work in progress, see [README.vst3](README.vst3)): `-DENABLE_VST3=ON -DVST3_SDK_PATH=<vst3sdk checkout>` (default OFF). The SDK is a source checkout outside the repository with its `base cmake pluginterfaces public.sdk` submodules initialized (README.vst3, "Getting the VST3 SDK"); the distro package `libvst3sdk-dev` is not enough. Plugin scanning and VST3 effects work (`muse/vst3.cpp`; bundles are scanned in the `muse_plugin_scan` sandbox; both use the host code in `vst3/`); VST3 instruments (synth tracks) work too. `vst3/` also builds stand-alone with its own tests (`ctest` there), and `ctest -R vst3_cache` runs the cache test from the MusE build dir.
 - There is **no automated test suite for the application and no linter configuration**. Verify changes by building and running the `muse` binary. (`awl/ltest.cpp` is an unrelated widget demo.) The exception is `tests/stem_export/run.sh`, which runs MusE headless (dummy driver, Qt `minimal` platform, a `LD_PRELOAD` helper driving the GUI) and checks exported stems sample by sample; it shows how to test other offline renders the same way.
 - Release steps (version bump in CMakeLists.txt, ChangeLog, `make package_source`, tagging) are in [README.developer](README.developer). Style guidance there is just "keep it consistent".
 
@@ -64,6 +64,7 @@ Understand this before touching song/track/part/event data. (Full explanation: [
 
 ## Conventions
 
+- Git: never commit (including finishing a merge, rebase or cherry-pick) unless the user explicitly asks for that commit. Leave changes in the working tree or staged and let the user decide when to commit. Approval of one commit does not extend to later ones.
 - Style is loose; match the surrounding file (mixed indentation and brace styles exist, much code is from 2000s-era Werner Schweer). Files carry the GPL header (GPL v2+).
 - Prefer Qt facilities over adding support libraries (see README.developer).
 - Test cases: when you write any test case (unit test, test program, test data), put it in the `tests/` directory (`src/tests/`), not next to the code it tests. Existing tests elsewhere (`vst3/`) stay where they are.

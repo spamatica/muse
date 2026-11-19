@@ -1952,7 +1952,8 @@ bool MusE::loadProjectFile1(const QString& name, bool songTemplate, bool doReadM
                         MusEGlobal::projectSampleRate = MusEGlobal::sampleRate;
                     }
 
-                    if (!songTemplate &&
+                    // No warning (and no talk about converters) if the sample rate conversion is off.
+                    if (!songTemplate && MusEGlobal::config.enableSampleRateConversion &&
                         //MusEGlobal::audioDevice->deviceType() != AudioDevice::DUMMY_AUDIO &&  // Why exclude dummy?
                         MusEGlobal::projectSampleRate != MusEGlobal::sampleRate)
                     {
@@ -2268,7 +2269,8 @@ bool MusE::finishLoadProjectFile1(const QString& name, bool songTemplate, bool d
                         MusEGlobal::projectSampleRate = MusEGlobal::sampleRate;
                     }
 
-                    if (!songTemplate &&
+                    // No warning (and no talk about converters) if the sample rate conversion is off.
+                    if (!songTemplate && MusEGlobal::config.enableSampleRateConversion &&
                         //MusEGlobal::audioDevice->deviceType() != AudioDevice::DUMMY_AUDIO &&  // Why exclude dummy?
                         MusEGlobal::projectSampleRate != MusEGlobal::sampleRate)
                     {
@@ -2849,6 +2851,12 @@ void MusE::closeEvent(QCloseEvent* event)
     saveStateExtra();
 
     writeGlobalConfiguration();
+
+    // From here on the song, with its parts, is torn down while the editor windows still exist.
+    // When this window is hidden after closeEvent() the focus changes, and focusChanged() would
+    //  store the active editor's view state into its (deleted) parts, which crashed on quit with
+    //  a drum editor or piano roll open. Their state has been saved above.
+    disconnect(qApp, SIGNAL(focusChanged(QWidget*,QWidget*)), this, SLOT(focusChanged(QWidget*,QWidget*)));
 
     if(MusEGlobal::debugMsg)
         fprintf(stderr, "MusE: Exiting JackAudio\n");
@@ -5761,7 +5769,8 @@ bool MusE::importWaveToTrack(QString& name, unsigned tick, MusECore::Track* trac
    track->setChannels(f->channels());
    track->resetMeter();
    int samples = f->samples();
-   const bool rateDiffers = MusEGlobal::sampleRate != f->samplerate();
+   // With sample rate conversion off the file is used as it is, without any offer to convert it.
+   const bool rateDiffers = MusEGlobal::config.enableSampleRateConversion && MusEGlobal::sampleRate != f->samplerate();
    // SF_FORMAT_MPEG, only defined in libsndfile >= 1.1.0
    const bool isMp3 = (f->format() & SF_FORMAT_TYPEMASK) == 0x230000;
    bool convertNow = false;

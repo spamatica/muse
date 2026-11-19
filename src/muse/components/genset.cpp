@@ -33,6 +33,8 @@
 #include <QCollator>
 #include <QMessageBox>
 #include <QTimer>
+#include <QGuiApplication>
+#include <QLatin1String>
 
 #include "genset.h"
 #include "app.h"
@@ -45,8 +47,10 @@
 //#include "al/al.h"
 #include "undo.h"
 #include "cobject.h"
+#include "config.h"
 
 #include "song.h"
+#include "wave.h"
 #include "operations.h"
 #include "audio.h"
 #include "audioparallel.h"
@@ -519,6 +523,7 @@ void GlobalSettingsConfig::updateSettings()
       minSliderSelect->setValue(int(MusEGlobal::config.minSlider));
       minMeterSelect->setValue(MusEGlobal::config.minMeter);
       freewheelCheckBox->setChecked(MusEGlobal::config.freewheelMode);
+      enableSampleRateConversionCheckBox->setChecked(MusEGlobal::config.enableSampleRateConversion);
       denormalCheckBox->setChecked(MusEGlobal::config.useDenormalBias);
       outputLimiterCheckBox->setChecked(MusEGlobal::config.useOutputLimiter);
       vstInPlaceCheckBox->setChecked(MusEGlobal::config.vstInPlace);
@@ -560,7 +565,17 @@ void GlobalSettingsConfig::updateSettings()
       lmbDecreasesCheckBox->setChecked(MusEGlobal::config.leftMouseButtonCanDecrease);
 //      rangeMarkerWithoutMMBCheckBox->setChecked(MusEGlobal::config.rangeMarkerWithoutMMB);
       smartFocusCheckBox->setChecked(MusEGlobal::config.smartFocus);
+#ifndef WAYLAND_SUPPORT
+      // No cursor move support under Qt (yet) on Wayland or xcb via xwayland.
+      if(QGuiApplication::platformName() != QLatin1String("wayland") &&
+         QGuiApplication::platformName() != QLatin1String("xcb"))
+#endif
       borderlessMouseCheckBox->setChecked(MusEGlobal::config.borderlessMouse);
+#ifndef WAYLAND_SUPPORT
+      else
+        borderlessMouseCheckBox->setEnabled(false);
+#endif
+
       velocityPerNoteCheckBox->setChecked(MusEGlobal::config.velocityPerNote);
       
       addHiddenCheckBox->setChecked(MusEGlobal::config.addHiddenTracks);
@@ -665,6 +680,9 @@ void GlobalSettingsConfig::apply()
       MusEGlobal::config.minSlider   = minSliderSelect->value();
       MusEGlobal::config.minMeter    = minMeterSelect->value();
       MusEGlobal::config.freewheelMode = freewheelCheckBox->isChecked();
+      MusEGlobal::config.enableSampleRateConversion = enableSampleRateConversionCheckBox->isChecked();
+      // Files that are opened from now on use the new setting.
+      MusECore::SndFile::setSampleRateConversionEnabled(MusEGlobal::config.enableSampleRateConversion);
       MusEGlobal::config.useDenormalBias = denormalCheckBox->isChecked();
       MusEGlobal::config.useOutputLimiter = outputLimiterCheckBox->isChecked();
       MusEGlobal::config.vstInPlace  = vstInPlaceCheckBox->isChecked();
@@ -734,6 +752,11 @@ void GlobalSettingsConfig::apply()
       MusEGlobal::config.leftMouseButtonCanDecrease = lmbDecreasesCheckBox->isChecked();
 //      MusEGlobal::config.rangeMarkerWithoutMMB = rangeMarkerWithoutMMBCheckBox->isChecked();
       MusEGlobal::config.smartFocus = smartFocusCheckBox->isChecked();
+#ifndef WAYLAND_SUPPORT
+      // No cursor move support under Qt (yet) on Wayland or xcb via xwayland.
+      if(QGuiApplication::platformName() != QLatin1String("wayland") &&
+         QGuiApplication::platformName() != QLatin1String("xcb"))
+#endif
       MusEGlobal::config.borderlessMouse = borderlessMouseCheckBox->isChecked();
       MusEGlobal::config.velocityPerNote = velocityPerNoteCheckBox->isChecked();
       MusEGlobal::config.noPluginScaling = revertPluginNativeGUIScalingCheckBox->isChecked();

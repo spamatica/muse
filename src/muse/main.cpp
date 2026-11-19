@@ -26,13 +26,14 @@
 #include <QCommandLineOption>
 #include <QDir>
 #include <QFile>
-//#include <QFileInfo>
+#include <QFileInfo>
 #include <QFileInfoList>
 #include <QDirIterator>
 #include <QKeyEvent>
 #include <QMessageBox>
 #include <QLocale>
 #include <QSplashScreen>
+#include <QPointer>
 #include <QTimer>
 #include <QTranslator>
 #include <QIcon>
@@ -634,6 +635,10 @@ CommandLineParseResult parseCommandLine(
 
 int main(int argc, char* argv[])
 {
+#if defined(Q_OS_LINUX) && !defined(WAYLAND_SUPPORT)
+      ::setenv("QT_QPA_PLATFORM", "xcb", 0);
+#endif
+
       // Get the separator used for file paths.
       const QChar list_separator = QDir::listSeparator();
 
@@ -690,14 +695,13 @@ int main(int argc, char* argv[])
         timer.start();
 
         // Make working copies of the arguments.
-        const int argument_count = argc;
         int argc_copy = argc;
         char** argv_copy = nullptr;
-        if(argument_count > 0)
+        if(argc_copy > 0)
         {
-          argv_copy = (char**)malloc(argument_count * sizeof(char*));
+          argv_copy = (char**)malloc(argc_copy * sizeof(char*));
           int len = 0;
-          for(int i = 0; i < argument_count; ++i)
+          for(int i = 0; i < argc_copy; ++i)
           {
             argv_copy[i] = nullptr;
             if(argv[i])
@@ -1318,7 +1322,7 @@ int main(int argc, char* argv[])
 
         if(muse_splash)
         {
-            muse_splash->showMessage(splash_prefix + QString(" Creating plugin cache files..."),
+            muse_splash->showMessage(splash_prefix + QString(" Checking plugin cache files..."),
                                      Qt::AlignLeft|Qt::AlignBottom, Qt::yellow);
           qApp->processEvents();
         }
@@ -1372,7 +1376,31 @@ int main(int argc, char* argv[])
           types |= MusEPlugin::PluginTypeLV2;
 
         types |= MusEPlugin::PluginTypeUnknown;
-        
+
+        // Scanning can take minutes (a VST3 bundle can hold hundreds of plugins).
+        // Show what is being scanned, with moving dots, so that it does not look hung.
+        if(muse_splash)
+        {
+          QElapsedTimer splashTimer;
+          splashTimer.start();
+          // Clicking the splash screen closes and deletes it.
+          QPointer<QSplashScreen> splash(muse_splash);
+          MusEPlugin::setPluginScanProgressCallback(
+            [splash, splash_prefix, splashTimer](const QString& file, const QString& lastPlugin)
+            {
+              if(!splash)
+                return;
+              const QString dots = QString(".").repeated(1 + (splashTimer.elapsed() / 400) % 3);
+              const QString name = QFileInfo(file).fileName();
+              const QString text = lastPlugin.isEmpty() ?
+                QCoreApplication::translate("@default", "Scanning plugins%1 %2").arg(dots, name) :
+                QCoreApplication::translate("@default", "Scanning plugins%1 %2: %3").arg(dots, name, lastPlugin);
+              splash->showMessage(splash_prefix + QString(" ") + text,
+                                       Qt::AlignLeft|Qt::AlignBottom, Qt::yellow);
+              qApp->processEvents();
+            });
+        }
+
         MusEPlugin::checkPluginCacheFiles(new_plugin_cache_path,
                                         // List of plugins to scan into and write to cache files from.
                                         &MusEPlugin::pluginList,
@@ -1388,6 +1416,8 @@ int main(int argc, char* argv[])
                                         types,
                                         // Debug messages.
                                         MusEGlobal::debugMsg);
+
+        MusEPlugin::setPluginScanProgressCallback(MusEPlugin::PluginScanProgressFunc());
 
         // Done with rescan trigger. Reset it now.
         if(do_rescan)
@@ -1606,6 +1636,9 @@ int main(int argc, char* argv[])
         // setup the prefetch fifo length now that the segmentSize is known
         MusEGlobal::fifoLength = 131072 / MusEGlobal::segmentSize;
         MusECore::initAudioPrefetch();
+
+        // Whether files with another sample rate than the system rate are converted.
+        MusECore::SndFile::setSampleRateConversionEnabled(MusEGlobal::config.enableSampleRateConversion);
 
         // Set up the wave module now that sampleRate and segmentSize are known.
         MusECore::SndFile::initWaveModule(
@@ -1915,9 +1948,12 @@ int main(int argc, char* argv[])
         //optind = 0;
 
         // Free the working copies of the arguments.
+        // Note that argc_copy might not be the same as the original argc,
+        //  since Qt or lash etc. might remove arguments they recognize,
+        //  and decrement the counter.
         if(argv_copy)
         {
-          for(int i = 0; i < argument_count; ++i)
+          for(int i = 0; i < argc_copy; ++i)
           {
             if(argv_copy[i])
               free(argv_copy[i]);

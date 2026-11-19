@@ -51,6 +51,7 @@ SndFileList* SndFile::_sndFiles = nullptr;
 AudioConverterPluginList* SndFile::_pluginList = nullptr;
 AudioConverterSettingsGroup** SndFile::_defaultSettings = nullptr;
 int SndFile::_systemSampleRate = 0;
+bool SndFile::_sampleRateConversionEnabled = true;
 int SndFile::_segSize = 0;
 
 // static
@@ -1169,6 +1170,8 @@ bool SndFile::isFileWritable() const
 
 double SndFile::sampleRateRatio() const
 {
+  if(!_sampleRateConversionEnabled)
+    return 1.0;
   return (double)sfinfo.samplerate / (double)_systemSampleRate;
 }
 
@@ -1178,7 +1181,7 @@ double SndFile::sampleRateRatio() const
 
 bool SndFile::sampleRateDiffers() const
 {
-  return sfinfo.samplerate != _systemSampleRate;
+  return _sampleRateConversionEnabled && sfinfo.samplerate != _systemSampleRate;
 }
 
 bool SndFile::isStretched() const 

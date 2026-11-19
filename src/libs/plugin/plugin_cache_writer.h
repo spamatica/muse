@@ -25,6 +25,7 @@
 #define __PLUGIN_CACHE_WRITER_H__
 
 #include <QString>
+#include <functional>
 
 #include "config.h"
 #include "plugin_scan.h"
@@ -201,6 +202,14 @@ bool createPluginCacheFiles(
   // Print some stderr text
   bool debugStdErr = false
 );
+
+// Called while plugins are scanned, from the thread that scans (at startup the GUI thread,
+//  which can use it to keep a splash screen up to date). It is called when a plugin file
+//  is about to be scanned, and then about four times a second until it is done, with the
+//  name of the plugin the scanner last reported (empty if none yet).
+typedef std::function<void (const QString& file, const QString& lastPlugin)> PluginScanProgressFunc;
+// Set the progress function, or an empty one to stop calling it.
+void setPluginScanProgressCallback(const PluginScanProgressFunc& func);
 
 // Checks existence of given cache file types.
 // Writes ALL the given types of cache files if ANY are not found.

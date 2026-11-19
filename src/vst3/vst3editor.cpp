@@ -25,6 +25,9 @@ using namespace Steinberg;
 
 namespace MusEVst3 {
 
+// At the end of the file, away from the X11 headers' macros.
+static int mapXEmbedClients(unsigned long window);
+
 //---------------------------------------------------------
 //   QtFrame
 //   Implements IPlugFrame, and the Linux run loop that X11
@@ -205,6 +208,16 @@ bool Editor::open(std::string& error)
     return false;
   }
   _view = view;
+
+  // A plugin window that follows XEmbed is mapped by the host (us), not by the plugin
+  //  (MT-PowerDrumKit, made with VSTGUI, stays blank otherwise). Some plugins create their
+  //  window a moment later, so look again for a while.
+  mapXEmbedClients(wid);
+  for(int ms : { 50, 250, 1000 })
+    QTimer::singleShot(ms, this, [this]() {
+      if(_view)
+        mapXEmbedClients(winId());
+    });
   return true;
 }
 
@@ -269,6 +282,76 @@ void Editor::closeEvent(QCloseEvent* e)
   QWidget::closeEvent(e);
   if(_onClosed)
     _onClosed();
+}
+
+} // namespace MusEVst3
+
+#include <X11/Xlib.h>
+
+namespace MusEVst3 {
+
+//---------------------------------------------------------
+//   mapXEmbedClients
+//   XEmbed: a client window inside ours that has _XEMBED_INFO
+//    with the XEMBED_MAPPED flag wants to be mapped by the
+//    embedder. Tell it that it is embedded and map it.
+//    Returns the number of windows mapped.
+//---------------------------------------------------------
+
+static int mapXEmbedClients(unsigned long window)
+{
+  // A connection of our own, so that nothing of Qt's platform internals is needed.
+  Display* dpy = XOpenDisplay(nullptr);
+  if(!dpy)
+    return 0;
+
+  int mapped = 0;
+  const Atom infoAtom = XInternAtom(dpy, "_XEMBED_INFO", True);   // Does not exist if nobody uses it.
+  const Atom xembedAtom = XInternAtom(dpy, "_XEMBED", False);
+  Window root = 0, parent = 0;
+  Window* children = nullptr;
+  unsigned int n = 0;
+  if(infoAtom != 0 && XQueryTree(dpy, window, &root, &parent, &children, &n))
+  {
+    for(unsigned int i = 0; i < n; ++i)
+    {
+      Atom type = 0;
+      int format = 0;
+      unsigned long count = 0, after = 0;
+      unsigned char* data = nullptr;
+      if(XGetWindowProperty(dpy, children[i], infoAtom, 0, 2, False, infoAtom,
+                            &type, &format, &count, &after, &data) == Success &&
+         data && format == 32 && count >= 2)
+      {
+        // Format 32 properties come as longs: version, flags.
+        const long flags = reinterpret_cast<const long*>(data)[1];
+        XWindowAttributes attr;
+        if((flags & 1) && XGetWindowAttributes(dpy, children[i], &attr) && attr.map_state == IsUnmapped)
+        {
+          XEvent ev {};
+          ev.xclient.type = ClientMessage;
+          ev.xclient.window = children[i];
+          ev.xclient.message_type = xembedAtom;
+          ev.xclient.format = 32;
+          ev.xclient.data.l[0] = CurrentTime;
+          ev.xclient.data.l[1] = 0;        // XEMBED_EMBEDDED_NOTIFY
+          ev.xclient.data.l[2] = 0;
+          ev.xclient.data.l[3] = long(window);   // The embedder.
+          ev.xclient.data.l[4] = 0;        // Protocol version.
+          XSendEvent(dpy, children[i], False, NoEventMask, &ev);
+          XMapWindow(dpy, children[i]);
+          ++mapped;
+        }
+      }
+      if(data)
+        XFree(data);
+    }
+  }
+  if(children)
+    XFree(children);
+  XSync(dpy, False);
+  XCloseDisplay(dpy);
+  return mapped;
 }
 
 } // namespace MusEVst3

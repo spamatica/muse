@@ -31,6 +31,7 @@
 //#include <QFileInfoList>
 #include <QFileDevice>
 #include <QProcess>
+#include <QElapsedTimer>
 #include <QByteArray>
 //#include <QByteArrayList>
 #include <QStringList>
@@ -1571,6 +1572,26 @@ void writePluginScanInfo(int level, MusECore::Xml& xml, const PluginScanInfoStru
 //   Returns true on success
 //---------------------------------------------------------
 
+static PluginScanProgressFunc scanProgressFunc;
+
+void setPluginScanProgressCallback(const PluginScanProgressFunc& func)
+{
+  scanProgressFunc = func;
+}
+
+// The name of the plugin in the last complete "scanned: <name>" line of the scanner output.
+static QString lastScannedPlugin(const QByteArray& output)
+{
+  const QList<QByteArray> lines = output.split('\n');
+  // The last element is what follows the last newline: an incomplete line, or empty.
+  for(int i = lines.size() - 2; i >= 0; --i)
+  {
+    if(lines.at(i).startsWith("scanned: "))
+      return QString::fromUtf8(lines.at(i).mid(9));
+  }
+  return QString();
+}
+
 static bool pluginScan(
   const QString& filename,
   MusEPlugin::PluginTypes_t types,
@@ -1609,6 +1630,9 @@ static bool pluginScan(
   if(scanPorts)
     args << QString("-p");
 
+  if(scanProgressFunc)
+    scanProgressFunc(filename, QString());
+
   process.start(prog, args);
 
   bool fail = false;
@@ -1627,7 +1651,33 @@ static bool pluginScan(
 //     fail = true;
 //   }
 
-  if(!process.waitForFinished(10000))
+  // Wait until the scan finishes, as long as it makes progress. The scanner prints a line
+  //  for every plugin it has scanned in a VST3 bundle, which can hold hundreds of plugins
+  //  and take minutes. Only when nothing happens for a while is the user asked.
+  const int noProgressTimeoutMs = 10000;
+  QByteArray scanOutput;
+  bool finished = false;
+  {
+    QElapsedTimer sinceProgress;
+    sinceProgress.start();
+    while(!(finished = process.waitForFinished(250)))
+    {
+      if(process.state() == QProcess::NotRunning)
+        break;
+      const QByteArray out = process.readAllStandardOutput();
+      if(!out.isEmpty())
+      {
+        scanOutput += out;
+        sinceProgress.restart();
+      }
+      else if(sinceProgress.elapsed() >= noProgressTimeoutMs)
+        break;
+      if(scanProgressFunc)
+        scanProgressFunc(filename, lastScannedPlugin(scanOutput));
+    }
+  }
+
+  if(!finished && process.state() != QProcess::NotRunning)
   {
     std::fprintf(stderr, "\npluginScan FAILED: waitForFinished: file: %s\n\n", filename_ba.constData());
     while (1) {
@@ -1645,6 +1695,8 @@ static bool pluginScan(
         }
       } else {
         fail = true;
+        process.kill();
+        process.waitForFinished(1000);
         break; // failure
       }
     }
@@ -1652,7 +1704,7 @@ static bool pluginScan(
 
   if(!fail && debugStdErr)
   {
-    QByteArray out_array = process.readAllStandardOutput();
+    QByteArray out_array = scanOutput + process.readAllStandardOutput();
     if(!out_array.isEmpty() && out_array.at(0) != 0)
     {
       // Terminate just to be sure.
@@ -1866,6 +1918,14 @@ void scanLinuxVSTPlugins(PluginScanList* /*list*/, bool /*scanPorts*/, bool /*de
 //---------------------------------------------------------
 
 #ifdef VST3_SUPPORT
+// A bundle is named <something>.vst3. The user's plugin directory ~/.vst3 also has
+//  the suffix "vst3" (QFileInfo sees ".vst3" as an empty name with that suffix),
+//  but it is a directory of bundles, not a bundle.
+static bool isVst3BundleName(const QFileInfo& fi)
+{
+  return fi.suffix() == QLatin1String("vst3") && !fi.completeBaseName().isEmpty();
+}
+
 static void collectVst3Bundles(const QString& dirname, QStringList& bundles,
                                // Only for recursions, original top caller should not touch!
                                int recurseLevel = 0)
@@ -1879,7 +1939,7 @@ static void collectVst3Bundles(const QString& dirname, QStringList& bundles,
   }
 
   // A path in the list of directories can also be a bundle itself.
-  if(recurseLevel == 0 && QFileInfo(dirname).suffix() == QLatin1String("vst3") && QFileInfo(dirname).exists())
+  if(recurseLevel == 0 && isVst3BundleName(QFileInfo(dirname)) && QFileInfo(dirname).exists())
   {
     bundles.append(dirname);
     return;
@@ -1893,7 +1953,7 @@ static void collectVst3Bundles(const QString& dirname, QStringList& bundles,
     QDir::Files | QDir::AllDirs | QDir::NoDotAndDotDot, QDir::Name | QDir::IgnoreCase);
   for(const QFileInfo& fi : fi_list)
   {
-    if(fi.suffix() == QLatin1String("vst3"))
+    if(isVst3BundleName(fi))
       bundles.append(fi.filePath());
     else if(fi.isDir())
       // RECURSIVE!

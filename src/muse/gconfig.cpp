@@ -347,6 +347,7 @@ GlobalConfigValues config = {
       false,                        // vstInPlace  Enable VST in-place processing
       0,                            // audioThreads  Parallel audio processing, 0 = off
       true,                         // audioThreadsAuto
+      true,                         // enableSampleRateConversion
 
       44100,                        // Device audio preferred sample rate
       512,                          // Device audio buffer size

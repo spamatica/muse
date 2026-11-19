@@ -276,6 +276,11 @@ struct Instance::Impl
 
   std::vector<float> silence;                 // Stand-in input when the caller gives none.
   std::vector<float*> silencePtrs;
+  // Buffers for the buses that are not active. Some plugins write to all their output buses
+  //  whether they are active or not (MT-PowerDrumKit has 8), so they get somewhere to write to.
+  std::vector<float> spare;
+  std::vector<float*> spareInPtrs, spareOutPtrs;
+  std::vector<int> spareInOff, spareOutOff;   // Per bus, into spareInPtrs / spareOutPtrs.
   std::vector<Vst::AudioBusBuffers> inBuses, outBuses;
 };
 
@@ -548,6 +553,32 @@ bool Instance::setup(double sampleRate, int maxBlockSize, std::string& error, co
   d.silencePtrs.clear();
   for(int c = 0; c < d.inTotal; ++c)
     d.silencePtrs.push_back(d.silence.data() + size_t(c) * maxBlockSize);
+
+  // Spare buffers for the inactive buses, with the channel count the plugin reports for them.
+  {
+    int spareIn = 0, spareOut = 0;
+    d.spareInOff.assign(d.audioIns, 0);
+    d.spareOutOff.assign(d.audioOuts, 0);
+    for(int b = 0; b < d.audioIns; ++b)
+      if(!d.inBusActive[b])
+      {
+        d.spareInOff[b] = spareIn;
+        spareIn += std::max(d.inBusDetails[b].channels, 0);
+      }
+    for(int b = 0; b < d.audioOuts; ++b)
+      if(!d.outBusActive[b])
+      {
+        d.spareOutOff[b] = spareOut;
+        spareOut += std::max(d.outBusDetails[b].channels, 0);
+      }
+    d.spare.assign(size_t(spareIn + spareOut) * maxBlockSize, 0.0f);
+    d.spareInPtrs.clear();
+    d.spareOutPtrs.clear();
+    for(int c = 0; c < spareIn; ++c)
+      d.spareInPtrs.push_back(d.spare.data() + size_t(c) * maxBlockSize);
+    for(int c = 0; c < spareOut; ++c)
+      d.spareOutPtrs.push_back(d.spare.data() + size_t(spareIn + c) * maxBlockSize);
+  }
 
   d.inBuses.assign(d.audioIns, Vst::AudioBusBuffers());
   d.outBuses.assign(d.audioOuts, Vst::AudioBusBuffers());
@@ -937,8 +968,8 @@ bool Instance::process(const float* const* in, float* const* out, int nframes)
   d.outParams.clearQueue();
   d.outEvents.clear();
 
-  // Buffers. Inactive buses get zero channels. The channel arrays hold the channels of the active
-  //  buses one after the other.
+  // Buffers. The channel arrays hold the channels of the active buses one after the other.
+  // Inactive buses get spare buffers, which are thrown away (outputs) or silent (inputs).
   for(int b = 0; b < d.audioIns; ++b)
   {
     Vst::AudioBusBuffers& bb = d.inBuses[b];
@@ -947,6 +978,15 @@ bool Instance::process(const float* const* in, float* const* out, int nframes)
     {
       bb.numChannels = d.inBusCh[b];
       bb.channelBuffers32 = const_cast<float**>((in ? in : d.silencePtrs.data()) + d.inBusOff[b]);
+    }
+    else if(d.inBusDetails[b].channels > 0)
+    {
+      bb.numChannels = d.inBusDetails[b].channels;
+      bb.channelBuffers32 = d.spareInPtrs.data() + d.spareInOff[b];
+      bb.silenceFlags = (uint64(1) << std::min(bb.numChannels, 63)) - 1;
+      // A plugin might have written into it.
+      for(int c = 0; c < bb.numChannels; ++c)
+        std::fill(bb.channelBuffers32[c], bb.channelBuffers32[c] + nframes, 0.0f);
     }
   }
   for(int b = 0; b < d.audioOuts; ++b)
@@ -957,6 +997,11 @@ bool Instance::process(const float* const* in, float* const* out, int nframes)
     {
       bb.numChannels = d.outBusCh[b];
       bb.channelBuffers32 = const_cast<float**>(out + d.outBusOff[b]);
+    }
+    else if(d.outBusDetails[b].channels > 0)
+    {
+      bb.numChannels = d.outBusDetails[b].channels;
+      bb.channelBuffers32 = d.spareOutPtrs.data() + d.spareOutOff[b];
     }
   }
 

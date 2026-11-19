@@ -755,23 +755,40 @@ void Audio::msgBounce(const Pos* startPos)
       {
       if (!MusEGlobal::checkAudioDevice()) return;
 
-      MusEGlobal::audioDevice->seekTransport(startPos ? *startPos : MusEGlobal::song->lPos());
-      // Wait until seek takes effect.
-      msgAudioWait();
-      msgAudioWait();
-      for(int i = 0; i < 100; ++i)
+      const Pos target = startPos ? *startPos : MusEGlobal::song->lPos();
+
+      // A seek that is requested while the transport is still busy with another seek (for example the rewind on stop
+      //  after a previous bounce, which several bounces in a row, like the downmix of each marker, run into) can be
+      //  ignored by Audio::sync(). Bouncing would then start at the wrong position. So check that the seek really took
+      //  effect, and if not, ask again.
+      bool arrived = false;
+      for(int attempt = 0; attempt < 20 && !arrived; ++attempt)
       {
-        if(_syncReady)
-          break;
+        MusEGlobal::audioDevice->seekTransport(target);
+        // Wait until seek takes effect.
         msgAudioWait();
+        msgAudioWait();
+        for(int i = 0; i < 100; ++i)
+        {
+          if(_syncReady)
+            break;
+          msgAudioWait();
+        }
+        // Check if seek is really done.
+        if(!_syncReady)
+        {
+          fprintf(stderr, "ERROR: Audio::msgBounce(): Sync not ready!\n");
+          return;
+        }
+        arrived = (_pos.frame() == target.frame());
+        if(!arrived)
+          fprintf(stderr, "Audio::msgBounce(): The seek to frame %u had not taken effect (position is %u), seeking again\n",
+                  target.frame(), _pos.frame());
       }
-      // Check if seek is really done.
-      if(!_syncReady)
-      {
-        fprintf(stderr, "ERROR: Audio::msgBounce(): Sync not ready!\n");
-        return;
-      }
-      
+      if(!arrived)
+        fprintf(stderr, "WARNING: Audio::msgBounce(): Could not seek to frame %u, bouncing from frame %u\n",
+                target.frame(), _pos.frame());
+
       _bounceState = BounceStart;
       
 // REMOVE Tim. latency. Added. Moved here from audio thread process code (via Song::seqSignal()).
