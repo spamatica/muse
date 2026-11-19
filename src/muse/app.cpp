@@ -2846,6 +2846,12 @@ void MusE::closeEvent(QCloseEvent* event)
 
     writeGlobalConfiguration();
 
+    // From here on the song, with its parts, is torn down while the editor windows still exist.
+    // When this window is hidden after closeEvent() the focus changes, and focusChanged() would
+    //  store the active editor's view state into its (deleted) parts, which crashed on quit with
+    //  a drum editor or piano roll open. Their state has been saved above.
+    disconnect(qApp, SIGNAL(focusChanged(QWidget*,QWidget*)), this, SLOT(focusChanged(QWidget*,QWidget*)));
+
     if(MusEGlobal::debugMsg)
         fprintf(stderr, "MusE: Exiting JackAudio\n");
     MusECore::exitJackAudio();
