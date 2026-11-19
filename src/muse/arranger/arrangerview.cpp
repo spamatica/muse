@@ -1061,9 +1061,11 @@ void ArrangerView::updateShortcuts()
 void ArrangerView::clipboardChanged()
       {
       bool flag = false;
-      if(QApplication::clipboard()->mimeData()->hasFormat(QString("text/x-muse-midipartlist")) ||
-         QApplication::clipboard()->mimeData()->hasFormat(QString("text/x-muse-wavepartlist")) ||
-         QApplication::clipboard()->mimeData()->hasFormat(QString("text/x-muse-mixedpartlist")))
+      // There is no clipboard data at all on some platforms (for example Qt's offscreen platform).
+      const QMimeData* md = QApplication::clipboard()->mimeData();
+      if(md && (md->hasFormat(QString("text/x-muse-midipartlist")) ||
+                md->hasFormat(QString("text/x-muse-wavepartlist")) ||
+                md->hasFormat(QString("text/x-muse-mixedpartlist"))))
         flag = true;
       
       editPasteAction->setEnabled(flag);
