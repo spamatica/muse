@@ -344,6 +344,9 @@ if (VST3_SUPPORT)
       #  and the VST3 SDK headers.
       target_link_libraries(core muse_vst3host)
       target_include_directories(core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+      # The plugin editor (../vst3/vst3editor.cpp) maps XEmbed plugin windows with Xlib.
+      find_package(X11 REQUIRED)
+      target_link_libraries(core ${X11_X11_LIB})
 endif (VST3_SUPPORT)
 
 if(NOT LV2_USE_PLUGIN_CACHE)

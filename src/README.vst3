@@ -308,6 +308,15 @@ Notes from step 2
     timer and a file descriptor. Both are served by the Qt event loop.
   * The plugin's editor must be closed (view removed, frame cleared) before the plugin
     instance is destroyed. Editor::closeView() does that, the Editor destructor too.
+  * Some plugins follow XEmbed: their window inside ours has _XEMBED_INFO with the
+    XEMBED_MAPPED flag and stays unmapped (a blank editor) until the host maps it
+    (MT-PowerDrumKit, VSTGUI). Editor::open() maps such windows, also a moment later.
+  * Some plugins write to all their output buses, active or not (MT-PowerDrumKit has 8).
+    Inactive buses get spare buffers, with null pointers such a plugin crashed.
+  * The stand-alone tests take the first instrument found. With MT-PowerDrumKit in ~/.vst3
+    that is a drum kit that is silent until it is set up in its GUI, so set
+    VST3_TEST_INSTRUMENT, to an instrument whose pitch follows the pitch bend (see
+    "Pick plugins like these" below).
   * Screenshots with QScreen::grabWindow are black for XWayland windows, so the tests check
     the X window tree instead (XQueryTree) rather than pixels.
   * The synthetic click test depends on the compositor delivering XTest input. When it is

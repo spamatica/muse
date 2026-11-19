@@ -54,7 +54,7 @@ target_link_libraries(vst3probe muse_vst3host)
 find_package(Qt5 COMPONENTS Widgets REQUIRED)
 find_package(X11 REQUIRED)
 add_library(muse_vst3gui STATIC vst3editor.cpp vst3editor.h)
-target_link_libraries(muse_vst3gui PUBLIC muse_vst3host Qt5::Widgets)
+target_link_libraries(muse_vst3gui PUBLIC muse_vst3host Qt5::Widgets ${X11_X11_LIB})
 target_compile_options(muse_vst3gui PRIVATE -Wall -Wextra -Wno-unused-parameter)
 
 add_executable(vst3gui vst3gui.cpp)
