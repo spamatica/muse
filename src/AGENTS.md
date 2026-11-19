@@ -63,6 +63,7 @@ Understand this before touching song/track/part/event data. (Full explanation: [
 
 ## Conventions
 
+- Git: never commit (including finishing a merge, rebase or cherry-pick) unless the user explicitly asks for that commit. Leave changes in the working tree or staged and let the user decide when to commit. Approval of one commit does not extend to later ones.
 - Style is loose; match the surrounding file (mixed indentation and brace styles exist, much code is from 2000s-era Werner Schweer). Files carry the GPL header (GPL v2+).
 - Prefer Qt facilities over adding support libraries (see README.developer).
 - Test cases: when you write any test case (unit test, test program, test data), put it in the `tests/` directory (`src/tests/`), not next to the code it tests. Existing tests elsewhere (`vst3/`) stay where they are.
