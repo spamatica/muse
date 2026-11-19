@@ -6,7 +6,7 @@
 #  concept, probe tool and tests. Stand-alone for now, it is not part of the
 #  main MusE build yet.
 #
-#    cmake -S . -B build -DVST3_SDK_PATH=/path/to/vst3sdk
+#    cmake -S . -B build -DVST3_SDK_PATH=/path/to/vst3sdk     # default ~/dev/vst3sdk, see ../README.vst3
 #    cmake --build build -j
 #    ctest --test-dir build --output-on-failure
 #=============================================================================
@@ -17,9 +17,15 @@ project(muse_vst3 CXX C)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# The SDK defines RELEASE or DEVELOPMENT from the build type and does not compile without one.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 set(VST3_SDK_PATH "$ENV{HOME}/dev/vst3sdk" CACHE PATH "Path to a checkout of https://github.com/steinbergmedia/vst3sdk (3.8 or later, MIT)")
-if(NOT EXISTS "${VST3_SDK_PATH}/CMakeLists.txt")
-  message(FATAL_ERROR "VST3_SDK_PATH does not point to the VST3 SDK: ${VST3_SDK_PATH}")
+if(NOT EXISTS "${VST3_SDK_PATH}/CMakeLists.txt" OR NOT EXISTS "${VST3_SDK_PATH}/public.sdk/source/vst/hosting/module.h")
+  message(FATAL_ERROR "VST3_SDK_PATH does not point to the VST3 SDK: ${VST3_SDK_PATH}"
+                      " (a source checkout with its submodules initialized, see ../README.vst3)")
 endif()
 
 # Only the SDK libraries are needed, not the examples nor VSTGUI.
