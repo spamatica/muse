@@ -3513,6 +3513,14 @@ LADSPA_Handle VstNativePluginWrapper::instantiate(PluginI *pluginI)
     return 0;
   }
 
+  // Tell the plugin the sample rate and block size right away. The state of a plugin from a song file is sent to it
+  //  (effSetChunk) when the song is loaded, which is before the plugin is activated (see activate()) because that
+  //  is done lazily when the plugin is first processed. Some plugins, for example the LSP ones, divide by these values
+  //  in effSetChunk and crash with a division by zero if they have not been given them yet.
+  // The VST synths do the same in VstNativeSynthIF::init().
+  dispatch(state, effSetSampleRate, 0, 0, nullptr, MusEGlobal::sampleRate);
+  dispatch(state, effSetBlockSize, 0, MusEGlobal::segmentSize, nullptr, 0.0f);
+
   state->pluginI = pluginI;
   state->pluginWrapper = this;
   state->inPorts.resize(_inports);
