@@ -194,6 +194,11 @@ bool writeVst3Info(const char* filename, bool doPorts, int level, MusECore::Xml&
       writePluginScanInfo(level, xml, info, doPorts);
       any = true;
     }
+    // Tell the host that the scan is making progress. A bundle can hold hundreds of
+    //  plugins (lsp-plugins.vst3 has about 200), the host only gives up when no
+    //  progress is reported for a while (see pluginScan() in plugin_cache_writer.cpp).
+    std::printf("scanned: %s\n", pi.name.c_str());
+    std::fflush(stdout);
   }
   return any;
 }

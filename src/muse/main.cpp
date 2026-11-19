@@ -26,13 +26,14 @@
 #include <QCommandLineOption>
 #include <QDir>
 #include <QFile>
-//#include <QFileInfo>
+#include <QFileInfo>
 #include <QFileInfoList>
 #include <QDirIterator>
 #include <QKeyEvent>
 #include <QMessageBox>
 #include <QLocale>
 #include <QSplashScreen>
+#include <QPointer>
 #include <QTimer>
 #include <QTranslator>
 #include <QIcon>
@@ -1321,7 +1322,7 @@ int main(int argc, char* argv[])
 
         if(muse_splash)
         {
-            muse_splash->showMessage(splash_prefix + QString(" Creating plugin cache files..."),
+            muse_splash->showMessage(splash_prefix + QString(" Checking plugin cache files..."),
                                      Qt::AlignLeft|Qt::AlignBottom, Qt::yellow);
           qApp->processEvents();
         }
@@ -1375,7 +1376,31 @@ int main(int argc, char* argv[])
           types |= MusEPlugin::PluginTypeLV2;
 
         types |= MusEPlugin::PluginTypeUnknown;
-        
+
+        // Scanning can take minutes (a VST3 bundle can hold hundreds of plugins).
+        // Show what is being scanned, with moving dots, so that it does not look hung.
+        if(muse_splash)
+        {
+          QElapsedTimer splashTimer;
+          splashTimer.start();
+          // Clicking the splash screen closes and deletes it.
+          QPointer<QSplashScreen> splash(muse_splash);
+          MusEPlugin::setPluginScanProgressCallback(
+            [splash, splash_prefix, splashTimer](const QString& file, const QString& lastPlugin)
+            {
+              if(!splash)
+                return;
+              const QString dots = QString(".").repeated(1 + (splashTimer.elapsed() / 400) % 3);
+              const QString name = QFileInfo(file).fileName();
+              const QString text = lastPlugin.isEmpty() ?
+                QCoreApplication::translate("@default", "Scanning plugins%1 %2").arg(dots, name) :
+                QCoreApplication::translate("@default", "Scanning plugins%1 %2: %3").arg(dots, name, lastPlugin);
+              splash->showMessage(splash_prefix + QString(" ") + text,
+                                       Qt::AlignLeft|Qt::AlignBottom, Qt::yellow);
+              qApp->processEvents();
+            });
+        }
+
         MusEPlugin::checkPluginCacheFiles(new_plugin_cache_path,
                                         // List of plugins to scan into and write to cache files from.
                                         &MusEPlugin::pluginList,
@@ -1391,6 +1416,8 @@ int main(int argc, char* argv[])
                                         types,
                                         // Debug messages.
                                         MusEGlobal::debugMsg);
+
+        MusEPlugin::setPluginScanProgressCallback(MusEPlugin::PluginScanProgressFunc());
 
         // Done with rescan trigger. Reset it now.
         if(do_rescan)
