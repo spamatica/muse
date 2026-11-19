@@ -37,7 +37,10 @@
 
 //#define ORGAN_DEBUG
 
-SynthCtrl Organ::synthCtrl[] = {
+// Default values as shown in the gui. The harmonics and sustain levels are attenuations
+//  in centibel, shown as -960..0, and transmitted with a bias of 8192 (MusE adds the bias
+//  to controllers with a negative minimum), so 0 dB is received as 8192.
+const SynthCtrl Organ::synthCtrl[] = {
       { "harm0",     HARM0,          0 },
       { "harm1",     HARM1,          0 },
       { "harm2",     HARM2,          0 },
@@ -62,6 +65,82 @@ SynthCtrl Organ::synthCtrl[] = {
 
 static int NUM_CONTROLLER = sizeof(Organ::synthCtrl)/sizeof(*(Organ::synthCtrl));
 static int NUM_INIT_CONTROLLER = NUM_CONTROLLER - 1;
+static_assert(sizeof(Organ::synthCtrl)/sizeof(*(Organ::synthCtrl)) == ORGAN_NUM_CONTROLLER,
+              "ORGAN_NUM_CONTROLLER must match the number of controllers");
+
+static const int CTRL_BIAS = 8192;
+
+// The longest envelope segment, in milliseconds (the gui allows up to 5000).
+static const int MAX_SEGMENT_MS = 5000;
+
+//---------------------------------------------------------
+//   isBiased
+//    True for the controllers with a negative range,
+//    which are received with a bias of 8192.
+//---------------------------------------------------------
+
+static bool isBiased(int ctrl)
+      {
+      switch (ctrl) {
+            case HARM0: case HARM1: case HARM2:
+            case HARM3: case HARM4: case HARM5:
+            case SUSTAIN_LO: case SUSTAIN_HI:
+                  return true;
+            default:
+                  return false;
+            }
+      }
+
+//---------------------------------------------------------
+//   attenuation
+//    Convert a received level controller value to an
+//    attenuation in centibel, 0 .. MAX_ATTENUATION.
+//    Songs from before the bias was introduced stored the
+//    unbiased values (-960..0), and the organ's own defaults
+//    were stored as 0, so values <= 0 are taken as unbiased.
+//---------------------------------------------------------
+
+static int attenuation(int data)
+      {
+      int cb = data <= 0 ? -data : CTRL_BIAS - data;
+      if (cb < 0)
+            cb = 0;
+      if (cb > MAX_ATTENUATION)
+            cb = MAX_ATTENUATION;
+      return cb;
+      }
+
+//---------------------------------------------------------
+//   envStep
+//    Advance a voice's envelope by one sample and return
+//    its attenuation in centibel.
+//---------------------------------------------------------
+
+static inline int envStep(int* state, Envelope* att, Envelope* dec, Envelope* rel, int sustain)
+      {
+      int a = MAX_ATTENUATION;
+      switch (*state) {
+            case ATTACK:
+                  if (att->step(&a))
+                        return a;
+                  *state = DECAY;
+                  // FALLTHROUGH
+            case DECAY:
+                  if (dec->step(&a))
+                        return a;
+                  *state = SUSTAIN;
+                  // FALLTHROUGH
+            case SUSTAIN:
+                  return sustain;
+            case RELEASE:
+                  if (rel->step(&a))
+                        return a;
+                  *state = OFF;
+                  return MAX_ATTENUATION;
+            default:
+                  return MAX_ATTENUATION;
+            }
+      }
 
 float* Organ::sine_table;
 float* Organ::g_triangle_table;
@@ -179,12 +258,37 @@ bool Organ::init(const char* name)
       gui->setWindowTitle(QString(name));
       gui->hide();
 
-      for (int i = 0; i < NUM_CONTROLLER; ++i)
-            setController(0, synthCtrl[i].num, synthCtrl[i].val);
-
       for (int i = 0; i < VOICES; ++i)
             voices[i].isOn = false;
+
+      resetControllers();
       return false;
+      }
+
+//---------------------------------------------------------
+//   resetControllers
+//    Set all controllers to their defaults.
+//---------------------------------------------------------
+
+void Organ::resetControllers()
+      {
+      for (int i = 0; i < NUM_CONTROLLER; ++i) {
+            const int num = synthCtrl[i].num;
+            setController(0, num, synthCtrl[i].val + (isBiased(num) ? CTRL_BIAS : 0));
+            }
+      }
+
+//---------------------------------------------------------
+//   msToTicks
+//---------------------------------------------------------
+
+int Organ::msToTicks(int ms) const
+      {
+      if (ms < 0)
+            ms = 0;
+      if (ms > MAX_SEGMENT_MS)
+            ms = MAX_SEGMENT_MS;
+      return int((long long)ms * sampleRate() / 1000);
       }
 
 int Organ::oldMidiStateHeader(const unsigned char** data) const 
@@ -279,53 +383,10 @@ void Organ::process(unsigned /*pos*/, float** ports, int /*numPorts*/, int offse
                   freq_256_harm4 = freq_256_harm3 * 2;
                   freq_256_harm5 = freq_256_harm4 * 2;
                   for (int i = 0; i < sampleCount; i++) {
-                        int a1=0, a2=0;	//prevent compiler warning: uninitialized usage of vars a1 & a2
-                        switch(v->state1) {
-                              case ATTACK:
-                                    if (v->envL1.step(&a1))
-                                          break;
-                                    v->state1 = DECAY;
-                                    // NOTE: Error suppressor for new gcc 7 'fallthrough' level 3 and 4:
-                                    // FALLTHROUGH
-                              case DECAY:
-                                    if (v->envL2.step(&a1))
-                                          break;
-                                    v->state1 = SUSTAIN;
-                                    // NOTE: Error suppressor for new gcc 7 'fallthrough' level 3 and 4:
-                                    // FALLTHROUGH
-                              case SUSTAIN:
-                                    a1 = sustain0;
-                                    break;
-                              case RELEASE:
-                                    if (v->envL3.step(&a1))
-                                          break;
-                                    v->state1 = OFF;
-                                    a1 = MAX_ATTENUATION;
-                                    break;
-                              }
-                        switch(v->state2) {
-                              case ATTACK:
-                                    if (v->envH1.step(&a2))
-                                          break;
-                                    v->state2 = DECAY;
-                                    // NOTE: Error suppressor for new gcc 7 'fallthrough' level 3 and 4:
-                                    // FALLTHROUGH
-                              case DECAY:
-                                    if (v->envH2.step(&a2))
-                                          break;
-                                    v->state2 = SUSTAIN;
-                                    // NOTE: Error suppressor for new gcc 7 'fallthrough' level 3 and 4:
-                                    // FALLTHROUGH
-                              case SUSTAIN:
-                                    a2 = sustain1;
-                                    break;
-                              case RELEASE:
-                                    if (v->envH3.step(&a2))
-                                          break;
-                                    v->state2 = OFF;
-                                    a1 = MAX_ATTENUATION;
-                                    break;
-                              }
+                        const int a1 = envStep(&v->state1, &v->envL1, &v->envL2, &v->envL3, sustain0);
+                        const int a2 = envStep(&v->state2, &v->envH1, &v->envH2, &v->envH3, sustain1);
+                        v->level1 = a1;
+                        v->level2 = a2;
                         if (v->state1 == OFF && v->state2 == OFF) {
                               v->isOn = false;
                               break;
@@ -347,50 +408,10 @@ void Organ::process(unsigned /*pos*/, float** ports, int /*numPorts*/, int offse
                   freq_256_harm4 = freq_256 * 3;
                   freq_256_harm5 = freq_256_harm3 * 2;
                   for (int i = 0; i < sampleCount; i++) {
-                        int a1=0, a2=0;//prevent compiler warning: uninitialized usage of vars a1 & a2
-                        switch(v->state1) {
-                              case ATTACK:
-                                    if (v->envL1.step(&a1))
-                                          break;
-                                    v->state1 = DECAY;
-                                    // NOTE: Error suppressor for new gcc 7 'fallthrough' level 3 and 4:
-                                    // FALLTHROUGH
-                              case DECAY:
-                                    if (v->envL2.step(&a1))
-                                          break;
-                                    v->state1 = SUSTAIN;
-                                    // FALLTHROUGH
-                              case SUSTAIN:
-                                    a1 = sustain0;
-                                    break;
-                              case RELEASE:
-                                    if (v->envL3.step(&a1))
-                                          break;
-                                    v->state1 = OFF;
-                                    a1 = MAX_ATTENUATION;
-                                    break;
-                              }
-                        switch(v->state2) {
-                              case ATTACK:
-                                    if (v->envH1.step(&a2))
-                                          break;
-                                    v->state2 = DECAY;
-                                    // FALLTHROUGH
-                              case DECAY:
-                                    if (v->envH2.step(&a2))
-                                          break;
-                                    v->state2 = SUSTAIN;
-                                    // FALLTHROUGH
-                              case SUSTAIN:
-                                    a2 = sustain1;
-                                    break;
-                              case RELEASE:
-                                    if (v->envH3.step(&a2))
-                                          break;
-                                    v->state2 = OFF;
-                                    a1 = MAX_ATTENUATION;
-                                    break;
-                              }
+                        const int a1 = envStep(&v->state1, &v->envL1, &v->envL2, &v->envL3, sustain0);
+                        const int a2 = envStep(&v->state2, &v->envH1, &v->envH2, &v->envH3, sustain1);
+                        v->level1 = a1;
+                        v->level2 = a2;
                         if (v->state1 == OFF && v->state2 == OFF) {
                               v->isOn = false;
                               break;
@@ -429,12 +450,16 @@ bool Organ::playNote(int channel, int pitch, int velo)
             voices[i].velocity = cb2amp(int(200 * log10((127.0 * 127)/(velo*velo))));
             voices[i].state1 = ATTACK;
             voices[i].state2 = ATTACK;
+            voices[i].level1 = MAX_ATTENUATION;
+            voices[i].level2 = MAX_ATTENUATION;
+            // Attack from silence to full level, decay from there to the sustain level.
+            // The release is set up at the note off, from the level reached then.
             voices[i].envL1.set(attack0,  MAX_ATTENUATION, 0);
-            voices[i].envL2.set(decay0,   MAX_ATTENUATION, sustain0);
+            voices[i].envL2.set(decay0,   0, sustain0);
             voices[i].envL3.set(release0, sustain0, MAX_ATTENUATION);
 
             voices[i].envH1.set(attack1,  MAX_ATTENUATION, 0);
-            voices[i].envH2.set(decay1,   MAX_ATTENUATION, sustain1);
+            voices[i].envH2.set(decay1,   0, sustain1);
             voices[i].envH3.set(release1, sustain1, MAX_ATTENUATION);
 
             voices[i].harm0_accum = 0;
@@ -459,11 +484,20 @@ void Organ::noteoff(int channel, int pitch)
       {
       bool found = false;
       for (int i = 0; i < VOICES; ++i) {
-            if (voices[i].isOn && (voices[i].pitch == pitch)
-               && (voices[i].channel == channel)) {
+            Voice* v = &voices[i];
+            if (v->isOn && (v->pitch == pitch) && (v->channel == channel)
+               && v->state1 != RELEASE && v->state2 != RELEASE) {
                   found = true;
-                  voices[i].state1 = RELEASE;
-                  voices[i].state2 = RELEASE;
+                  // Release from the level the envelopes are at, also when the
+                  //  note ends during the attack or decay.
+                  if (v->state1 != OFF) {
+                        v->envL3.set(release0, v->level1, MAX_ATTENUATION);
+                        v->state1 = RELEASE;
+                        }
+                  if (v->state2 != OFF) {
+                        v->envH3.set(release1, v->level2, MAX_ATTENUATION);
+                        v->state2 = RELEASE;
+                        }
                   }
             }
       if (!found)
@@ -480,74 +514,62 @@ void Organ::noteoff(int channel, int pitch)
 
 void Organ::setController(int ctrl, int data)
       {
-      int sr = sampleRate();
-      
-      // Changed By T356.
-      // Because of muse's auto-bias controllers, some of these negative-range 
-      //  controls need to apply the auto-bias correction.
-      
+      // The harmonics and sustain levels have a negative range, MusE and the gui
+      //  send them with a bias of 8192 (see attenuation()).
       switch (ctrl) {
             case HARM0:
-                  //harm0 = cb2amp(-data);
-                  harm0 = cb2amp(-data + 8192);
+                  harm0 = cb2amp(attenuation(data));
                   break;
             case HARM1:
-                  //harm1 = cb2amp(-data);
-                  harm1 = cb2amp(-data + 8192);
+                  harm1 = cb2amp(attenuation(data));
                   break;
             case HARM2:
-                  //harm2 = cb2amp(-data);
-                  harm2 = cb2amp(-data + 8192);
+                  harm2 = cb2amp(attenuation(data));
                   break;
             case HARM3:
-                  //harm3 = cb2amp(-data);
-                  harm3 = cb2amp(-data + 8192);
+                  harm3 = cb2amp(attenuation(data));
                   break;
             case HARM4:
-                  //harm4 = cb2amp(-data);
-                  harm4 = cb2amp(-data + 8192);
+                  harm4 = cb2amp(attenuation(data));
                   break;
             case HARM5:
-                  //harm5 = cb2amp(-data);
-                  harm5 = cb2amp(-data + 8192);
+                  harm5 = cb2amp(attenuation(data));
                   break;
-            case ATTACK_LO:   // maxval -> 500msec
-                  attack0 = (data * sr) / 1000;
+            case ATTACK_LO:   // msec
+                  attack0 = msToTicks(data);
                   break;
-            case DECAY_LO:    // maxval -> 5000msec
-                  decay0 = (data * sr) / 1000;
+            case DECAY_LO:
+                  decay0 = msToTicks(data);
                   break;
             case SUSTAIN_LO:
-                  //sustain0 = -data;
-                  sustain0 = -data + 8192;
+                  sustain0 = attenuation(data);
                   break;
             case RELEASE_LO:
-                  release0 = (data * sr) / 1000;
+                  release0 = msToTicks(data);
                   break;
             case ATTACK_HI:
-                  attack1 = (data * sr) / 1000;
+                  attack1 = msToTicks(data);
                   break;
             case DECAY_HI:
-                  decay1 =  (data * sr) / 1000;
+                  decay1 = msToTicks(data);
                   break;
             case SUSTAIN_HI:
-                  //sustain1 = -data;
-                  sustain1 = -data + 8192;
+                  sustain1 = attenuation(data);
                   break;
             case RELEASE_HI:
-                  release1 = (data * sr) / 1000;
+                  release1 = msToTicks(data);
                   break;
             case BRASS:
-                  brass = data;
+                  brass = data != 0;
                   break;
             case FLUTE:
-                  flute = data;
+                  flute = data != 0;
                   break;
             case REED:
-                  reed  = data;
+                  reed  = data != 0;
                   break;
             case VELO:
-                  velo = data;
+                  velo = data != 0;
                   break;
             case MusECore::CTRL_VOLUME:
                   data &= 0x7f;
@@ -556,11 +578,10 @@ void Organ::setController(int ctrl, int data)
             case MusECore::CTRL_ALL_SOUNDS_OFF:
                   for (int i = 0; i < VOICES; ++i)
                         voices[i].isOn = false;
-                  break;
+                  return;
             case MusECore::CTRL_RESET_ALL_CTRL:
-                  for (int i = 0; i < NUM_CONTROLLER; ++i)
-                        setController(0, synthCtrl[i].num, synthCtrl[i].val);
-                  break;
+                  resetControllers();
+                  return;
             default:
                   #ifdef ORGAN_DEBUG
                   fprintf(stderr, "Organ:set unknown Ctrl 0x%x to 0x%x\n", ctrl, data);
@@ -569,7 +590,7 @@ void Organ::setController(int ctrl, int data)
             }
       for (int i = 0; i < NUM_CONTROLLER; ++i) {
             if (synthCtrl[i].num == ctrl) {
-                  synthCtrl[i].val = data;
+                  ctrlVal[i] = data;
                   break;
                   }
             }
@@ -671,7 +692,7 @@ void Organ::getInitData(int* n, const unsigned char**p)
       
       //int* d = idata;
       for (int i = 0; i < NUM_INIT_CONTROLLER; ++i)
-            *d++ = synthCtrl[i].val;
+            *d++ = ctrlVal[i];
       //*n = NUM_INIT_CONTROLLER * sizeof(int); // sizeof(idata);
       *p = (unsigned char*)idata;
 }
