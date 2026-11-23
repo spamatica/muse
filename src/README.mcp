@@ -142,11 +142,11 @@ Gaps: GUI functions without an MCP tool
 
 From the menus of the main window, arranger, track list, mixer strips and the editors (piano roll,
 drum editor, wave editor, list editor, master track, marker window). Fill in the priority column.
-"Reuse" names existing code that a tool could call, so that it behaves like the GUI.
+"Reuse" names existing code that a tool could call, so that it behaves like the GUI. The numbers
+are those of the first review; the items done since are in "Done since the review" below.
 
 Missing:     not possible through MCP at all
 Partly:      readable, or some of it possible
-Done:        has a tool now (the tool is named in the Reuse column)
 
  #  Area / function                        State    Tier       Reuse                                   Priority
 --  -------------------------------------  -------  ---------  --------------------------------------  --------
@@ -154,19 +154,9 @@ Done:        has a tool now (the tool is named in the Reuse column)
  1  Read automation points of a parameter  Missing  read       CtrlList of AudioTrack::controller()
  2  Add / move / delete automation points  Missing  edit       UndoOp AddAudioCtrlVal, DeleteAudioCtrlVal,
                                                                ModifyAudioCtrlVal(List)
- 3  Automation mode (off/read/write/touch) Done     control    set_automation_type
  4  Clear automation, take snapshot        Missing  edit       MusE::clearAutomation(),
                                                                takeAutomationSnapshot()
     PARTS (arranger)
- 5  Change part length                     Done     edit       resize_part
- 6  Change part start (left edge)          Done     edit       resize_part
- 7  Rename part                            Done     edit       rename_part
- 8  Mute part                              Done     control    set_part_mute
- 9  Split part at a position               Done     edit       split_part
-10  Glue / super glue parts                Done     edit       glue_parts
-11  Copy, duplicate, clone, de-clone       Done     edit       copy_part, declone_part (no clipboard
-                                                               paste: copy_part names the target)
-12  Wave part volume and fades             Done     edit       set_wave_part_volume
 13  Part color                             Missing  edit       (cosmetic)
 14  Shrink / expand parts to events,       Missing  edit       functions.cpp shrink_parts(),
     purge hidden events                                        expand_parts(), clean_parts()
@@ -180,17 +170,7 @@ Done:        has a tool now (the tool is named in the Reuse column)
 20  Controllers (CC), pitch bend,          Missing  read/edit  Song::addEventOperation() with
     program change events in parts                             controller events
 21  Sysex and meta events (list editor)    Missing  edit       liste/ insert code
-22  Midi track settings: transpose,        Done     control    set_midi_track_properties; the strip's
-    velocity, delay, length, compression                       controllers: set_midi_controller
 23  Convert midi <-> drum track            Missing  edit       track list "Convert ..." actions
-    MIXER / AUDIO TRACKS
-24  Aux send levels                        Done     control    set_aux_send
-25  Gain, prefader                         Done     control    set_track_gain, set_track_prefader
-26  Track on/off                           Done     control    set_track_off
-27  Input monitor                          Done     control    set_track_monitor
-28  Mono / stereo                          Done     control    set_track_channels
-29  Move / swap plugins between slots      Done     edit       move_plugin
-30  Save / load mixer configuration        Done     dangerous  save_mixer_config, load_mixer_config
     TRACKS
 31  Duplicate track                        Missing  edit       Song::duplicateTracks()
 32  Reorder tracks (up/down/top/bottom)    Missing  edit       Song::moveSelectedTracks(),
@@ -230,9 +210,40 @@ GUI, opening editor windows, plugin and synth GUIs, global settings, shortcuts, 
 appearance, help).
 
 Suggested order (my view, by what an assistant working in a song needs most):
-  1. Automation (1-4; 3, the mode, is done)
-  2. Part editing (5-12): done; 13-15 (color, shrink/expand, global cut/insert/split) are left
-  3. Mixer and track completeness (24-30 done; 31-33 left)
-  4. Midi functions and controllers (16-22)
-  5. File import/export (42-44)
-  6. Tempo, signature and key map (38-39)
+  1. Automation points (1, 2, 4)
+  2. Track completeness (31-33)
+  3. Midi functions and controllers (16-21)
+  4. File import/export (42-44)
+  5. Tempo, signature and key map (38-39)
+  6. The rest of the parts (13-15)
+
+
+Done since the review
+---------------------
+
+ #  Area / function                        Tier       Tool
+--  -------------------------------------  ---------  ------------------------------------------------
+    AUTOMATION
+ 3  Automation mode (off/read/touch/       control    set_automation_type
+    latch/write)
+    PARTS (arranger)
+ 5  Change part length                     edit       resize_part
+ 6  Change part start (left edge)          edit       resize_part
+ 7  Rename part                            edit       rename_part
+ 8  Mute part                              control    set_part_mute
+ 9  Split part at a position               edit       split_part
+10  Glue / super glue parts                edit       glue_parts
+11  Copy, duplicate, clone, de-clone       edit       copy_part, declone_part (no clipboard paste:
+                                                      copy_part names the target)
+12  Wave part volume and fades             edit       set_wave_part_volume
+    MIDI
+22  Midi track settings: transpose,        control    set_midi_track_properties; the strip's
+    velocity, delay, length, compression              controllers: set_midi_controller
+    MIXER / AUDIO TRACKS
+24  Aux send levels                        control    set_aux_send
+25  Gain, prefader                         control    set_track_gain, set_track_prefader
+26  Track on/off                           control    set_track_off
+27  Input monitor                          control    set_track_monitor
+28  Mono / stereo                          control    set_track_channels
+29  Move / swap plugins between slots      edit       move_plugin
+30  Save / load mixer configuration        dangerous  save_mixer_config, load_mixer_config
