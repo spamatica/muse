@@ -666,30 +666,48 @@ void Song::duplicateTracks(Track *t)
         t->setSelected(false);
 
     } else {
-        for(TrackList::const_reverse_iterator it = tl.crbegin(); it != tl.crend(); ++it)
-        {
-            Track* track = *it;
-            if(track->selected() && !track->isFolderTrack())
-            {
-                if(names.genUniqueNames(track->type(), track->name(), copies))
-                {
-                    for(int cp = 0; cp < copies; ++cp)
-                    {
-                        Track* new_track = track->clone(flags);
-                        if(!new_track)
-                            break;
-                        new_track->setName(names.at(cp));
-                        idx = trackno + cp;
-                        operations.push_back(MusECore::UndoOp(MusECore::UndoOp::AddTrack, idx, new_track));
-                    }
-                }
-                track->setSelected(false);
-            }
-            --trackno;
-        }
+        std::vector<Track*> selected;
+        for(ciTrack it = tl.cbegin(); it != tl.cend(); ++it)
+            if((*it)->selected() && !(*it)->isFolderTrack())
+                selected.push_back(*it);
+        duplicateTracks(selected, copies, flags);
+        for(Track* track : selected)
+            track->setSelected(false);
+        return;
     }
 
     applyOperationGroup(operations);
+}
+
+std::vector<Track*> Song::duplicateTracks(const std::vector<Track*>& tracks, int copies, int flags)
+{
+    const TrackList& tl = _tracks;
+    std::vector<Track*> added;
+    int trackno = tl.size();
+    TrackNameFactory names;
+    Undo operations;
+    for(TrackList::const_reverse_iterator it = tl.crbegin(); it != tl.crend(); ++it)
+    {
+        Track* track = *it;
+        if(!track->isFolderTrack() && std::find(tracks.begin(), tracks.end(), track) != tracks.end())
+        {
+            if(names.genUniqueNames(track->type(), track->name(), copies))
+            {
+                for(int cp = 0; cp < copies; ++cp)
+                {
+                    Track* new_track = track->clone(flags);
+                    if(!new_track)
+                        break;
+                    new_track->setName(names.at(cp));
+                    operations.push_back(MusECore::UndoOp(MusECore::UndoOp::AddTrack, trackno + cp, new_track));
+                    added.push_back(new_track);
+                }
+            }
+        }
+        --trackno;
+    }
+    applyOperationGroup(operations);
+    return added;
 }          
 
 bool Song::addEventOperation(const Event& event, Part* part, bool do_port_ctrls, bool do_clone_port_ctrls)
@@ -6953,20 +6971,42 @@ void Song::dragMoveTrack(Track* dragged, Track* target)
 {
   if(!dragged || !target || dragged == target)
     return;
+  // What moves: All selected tracks if the dragged track is one of them, otherwise only the dragged track.
+  std::set<Track*> tracks;
+  if(dragged->selected())
+  {
+    for(Track* t : _tracks)
+      if(t->selected())
+        tracks.insert(t);
+  }
+  else
+    tracks.insert(dragged);
+  dragMoveTracks(tracks, target, dragged);
+}
+
+void Song::dragMoveTracks(const std::set<Track*>& tracks, Track* target, Track* reference)
+{
+  if(tracks.empty() || !target)
+    return;
   TrackOrder to(_tracks);
-  const int from = to.indexOf(dragged);
+  if(!reference)
+    for(Track* t : to.order)
+      if(tracks.count(t))
+      {
+        reference = t;
+        break;
+      }
+  const int from = to.indexOf(reference);
   const int dest = to.indexOf(target);
-  if(from < 0 || dest < 0)
+  if(from < 0 || dest < 0 || reference == target)
     return;
   const bool down = dest > from;
 
-  // What moves: All selected tracks if the dragged track is one of them, otherwise only the dragged track.
   // A folder always moves with its tracks.
   std::set<Track*> moving;
-  const bool all_selected = dragged->selected();
   for(Track* t : to.order)
   {
-    if(all_selected ? t->selected() : (t == dragged))
+    if(tracks.count(t))
     {
       moving.insert(t);
       if(t->isFolderTrack())
@@ -7030,6 +7070,15 @@ void Song::dragMoveTrack(Track* dragged, Track* target)
 
 void Song::moveSelectedTracks(bool up, bool full)
 {
+  std::set<const Track*> tracks;
+  for(const Track* t : _tracks)
+    if(t->selected())
+      tracks.insert(t);
+  moveTracks(tracks, up, full);
+}
+
+void Song::moveTracks(const std::set<const Track*>& tracks, bool up, bool full)
+{
   // Top level: The tracks that are not in a folder, and the folders with their tracks.
   struct Unit
   {
@@ -7046,9 +7095,9 @@ void Song::moveSelectedTracks(bool up, bool full)
       units.push_back(Unit{t, {}});
   }
 
-  bool changed = moveSelectedItems(units, [](const Unit& u) { return u.head->selected(); }, up, full);
+  bool changed = moveSelectedItems(units, [&tracks](const Unit& u) { return tracks.count(u.head) != 0; }, up, full);
   for(Unit& u : units)
-    changed |= moveSelectedItems(u.kids, [](const Track* t) { return t->selected(); }, up, full);
+    changed |= moveSelectedItems(u.kids, [&tracks](const Track* t) { return tracks.count(t) != 0; }, up, full);
   if(!changed)
     return;
 

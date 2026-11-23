@@ -29,7 +29,7 @@ Code:
   AGENTS.md                           short description for coding agents
 
 
-The tools (92)
+The tools (99)
 --------------
 
 Read (always on):
@@ -41,6 +41,7 @@ Control (reversible, not undoable, applied like the mixer strips do):
   transport, set_position, set_loop, set_click, set_locators, set_track_mute, set_track_solo,
   set_track_volume, set_track_pan, set_plugin_param, set_plugin_on, set_patch, cancel_export,
   set_part_mute and set_part_color (not undoable, like in the arranger),
+  set_folder_folded, set_track_color, set_track_comment (not undoable, like in the GUI),
   select_parts and select_tracks (the GUI's selection, for its commands on selected parts and tracks;
   the MCP tools name their parts and tracks and do not use it),
   mixer strips: set_aux_send, set_track_gain, set_track_prefader, set_track_off, set_track_monitor,
@@ -55,7 +56,8 @@ Edit (undoable unless the GUI's own action is not):
   add_track, rename_track, add_synth_track, move_tracks_to_folder, add_midi_part, move_part,
   resize_part, rename_part, split_part, glue_parts, copy_part (copy or clone), declone_part,
   set_wave_part_volume (volume and fades), shrink_parts, expand_parts, purge_hidden_events,
-  global_split,
+  global_split, duplicate_track, move_tracks (up/down/top/bottom, or onto a track as in drag and
+  drop), unfreeze_track (not undoable, like in the GUI),
   add_midi_notes, modify_midi_notes, delete_midi_notes, add_plugin, save_plugin_preset,
   load_plugin_preset, move_plugin (also to another track), add_route, remove_route (not undoable, like in the GUI), set_tempo,
   set_time_signature, set_tempo_map_enabled (not undoable), set_midi_track_output (not undoable),
@@ -65,12 +67,12 @@ Dangerous:
   delete_track, delete_part, remove_plugin, save_song, export_mixdown, export_stems,
   save_mixer_config, load_mixer_config (with dry_run and the import report),
   global_cut, global_insert (between the locators; they also move the tempo, signature, key and
-  markers, and are two undo steps, as in the GUI)
+  markers, and are two undo steps, as in the GUI), freeze_track
 
 Files (exports, mixer configurations) are only written and read inside the project folder of a
 saved song (links can not lead out), and replaced only with overwrite: true. Exports run one at a
 time: the tool starts the export and answers at once, get_export_status follows it, cancel_export
-stops it.
+stops it. freeze_track works the same way and shares get_export_status and cancel_export.
 
 
 Rules for adding a tool
@@ -106,7 +108,7 @@ The Edit tier makes scratch tracks (mcptest<pid>-...), the Dangerous tier delete
 the export tests in a scratch folder in the project folder, which it removes. It never records and
 never saves the song.
 
-A run headless, that passes completely (334 checks on 2026-11-23): use the stems test project, give
+A run headless, that passes completely (365 checks on 2026-11-23): use the stems test project, give
 MusE a home of its own (without that it may quit while loading the song), and an installed copy of
 the build through APPDIR: MusE starts the plugin scanner by its installed path, and without plugins
 the plugin tests are skipped (list_plugins finds nothing). The LADSPA example plugins (ladspa-sdk)
@@ -173,15 +175,6 @@ Partly:      readable, or some of it possible
     program change events in parts                             controller events
 21  Sysex and meta events (list editor)    Missing  edit       liste/ insert code
 23  Convert midi <-> drum track            Missing  edit       track list "Convert ..." actions
-    TRACKS
-31  Duplicate track                        Missing  edit       Song::duplicateTracks()
-32  Reorder tracks (up/down/top/bottom)    Missing  edit       Song::moveSelectedTracks(),
-                                                               UndoOp ReorderTracks
-33  Freeze / unfreeze track                Missing  dangerous  Song::freezeTrackInteractive()
-                                                               (needs a non-interactive start),
-                                                               Song::unfreezeTrack()
-34  Fold / unfold folder                   Missing  control    (track list fold action)
-35  Track color, comment                   Missing  edit       (cosmetic / notes)
     SYNTHS
 36  Synth parameters                       Missing  control    synth's SynthIF controls (set_plugin_param
                                                                only reaches effect slots)
@@ -213,10 +206,9 @@ appearance, help).
 
 Suggested order (my view, by what an assistant working in a song needs most):
   1. Automation points (1, 2, 4)
-  2. Track completeness (31-33)
-  3. Midi functions and controllers (16-21)
-  4. File import/export (42-44)
-  5. Tempo, signature and key map (38-39)
+  2. Midi functions and controllers (16-21)
+  3. File import/export (42-44)
+  4. Tempo, signature and key map (38-39)
 
 
 Done since the review
@@ -254,3 +246,12 @@ Done since the review
 28  Mono / stereo                          control    set_track_channels
 29  Move / swap plugins between slots      edit       move_plugin
 30  Save / load mixer configuration        dangerous  save_mixer_config, load_mixer_config
+    TRACKS
+31  Duplicate track                        edit       duplicate_track (Song::duplicateTracks() for given
+                                                      tracks, without the dialog)
+32  Reorder tracks (up/down/top/bottom)    edit       move_tracks (Song::moveTracks(), dragMoveTracks()
+                                                      for given tracks)
+33  Freeze / unfreeze track                dangerous  freeze_track (followed with get_export_status),
+                                           edit       unfreeze_track
+34  Fold / unfold folder                   control    set_folder_folded
+35  Track color, comment                   control    set_track_color, set_track_comment

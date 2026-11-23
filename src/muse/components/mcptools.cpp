@@ -299,6 +299,10 @@ QJsonObject trackJson(const Track* t, bool detail)
   o["recordArmed"] = t->recordFlag();
   if(!t->comment().isEmpty())
     o["comment"] = t->comment();
+  if(detail)
+    o["color"] = t->color().name();
+  if(t->isFolderTrack())
+    o["folded"] = static_cast<const FolderTrack*>(t)->folded();
   o["partCount"] = t->isFolderTrack() ? 0 : int(t->cparts()->size());
   if(detail && !t->isFolderTrack())
     o["automationType"] = automationTypeName(t->automationType());
@@ -516,11 +520,12 @@ const Marker* markerFromArgs(const QJsonObject& args, QString& error)
 //   Exports (downmix and stems)
 //---------------------------------------------------------
 
-// The export started through MCP. Only one runs at a time, like in the GUI.
+// The export (or freeze) started through MCP. Only one runs at a time, like in the GUI.
 struct McpExport {
-  QPointer<QObject> job;                  // The MarkerMixdown or StemExport while it runs.
+  std::function<bool()> running;          // Whether it is still running.
   std::function<ExportReport()> report;   // Reads the running job.
   std::function<void()> cancel;
+  std::function<ExportReport()> result;   // The result when it has finished, if the job does not report it itself.
   QString kind;                           // "mixdown" or "stems".
   QString path;                           // The file or folder.
   int id = 0;
@@ -558,7 +563,9 @@ QJsonObject exportReportJson(const ExportReport& r, bool running)
 // Remembers a started export: the result stays readable after the job has deleted itself.
 template <class Job> void trackExport(Job* job, const QString& kind, const QString& path)
 {
-  mcpExport.job = job;
+  QPointer<Job> alive(job);
+  mcpExport.running = [alive]() { return !alive.isNull(); };
+  mcpExport.result = nullptr;
   mcpExport.report = [job]() { return job->report(); };
   mcpExport.cancel = [job]() { job->cancel(); };
   mcpExport.kind = kind;
@@ -569,6 +576,24 @@ template <class Job> void trackExport(Job* job, const QString& kind, const QStri
     mcpExport.last = r;
     mcpExport.hasLast = true;
   });
+}
+
+bool mcpExportRunning()
+{
+  return mcpExport.running && mcpExport.running();
+}
+
+// The last result, or null if none has been started (or it is still running).
+const ExportReport* mcpExportResult()
+{
+  if(mcpExportRunning())
+    return nullptr;
+  if(!mcpExport.hasLast && mcpExport.result)
+  {
+    mcpExport.last = mcpExport.result();
+    mcpExport.hasLast = true;
+  }
+  return mcpExport.hasLast ? &mcpExport.last : nullptr;
 }
 
 // The project folder, canonical. Empty with error set if the song has not been saved (it has no folder).
@@ -684,8 +709,8 @@ QString exportProjectName()
 // Why an export can not start, also if one started through MCP is still running.
 QString exportBusy()
 {
-  if(mcpExport.job)
-    return QObject::tr("An export is running (see get_export_status).");
+  if(mcpExportRunning())
+    return QObject::tr("An export or freeze is running (see get_export_status).");
   return exportBlockedReason();
 }
 
@@ -3234,6 +3259,344 @@ void registerMcpTools(McpServer& server)
   }
 
   //---------------------------------------------------------
+  //   duplicate_track / move_tracks / freeze_track / unfreeze_track / set_folder_folded / set_track_color
+  //   set_track_comment
+  //---------------------------------------------------------
+  {
+    QJsonObject parts = prop("string", QObject::tr("none (the default): no parts. duplicate: copies of the parts, "
+                                                   "clones stay clones. copy: independent copies of all parts. "
+                                                   "clone: clones of all parts."));
+    parts["enum"] = QJsonArray{"none", "duplicate", "copy", "clone"};
+    QJsonObject routes = prop("string", QObject::tr("all (the default): the same routes as the track. default: the "
+                                                    "default routing of a new track. none: no routes."));
+    routes["enum"] = QJsonArray{"all", "default", "none"};
+    McpTool t = controlTool("duplicate_track",
+      QObject::tr("Duplicates a track, like Duplicate Track: the copies come right after it (in the same folder), "
+                  "with new names. The defaults are those of the dialog. Folders can not be duplicated. Undoable."),
+      schema({{"track", prop("string", QObject::tr("The track."))},
+              {"copies", prop("integer", QObject::tr("How many copies, 1 to 99. 1 if left out."))},
+              {"parts", parts}, {"routes", routes},
+              {"standard_controllers", prop("boolean", QObject::tr("Copy volume, pan and synth controllers. true if left out."))},
+              {"plugins", prop("boolean", QObject::tr("Copy the effect rack plugins. false if left out."))},
+              {"plugin_controllers", prop("boolean", QObject::tr("Copy the plugin controllers (automation). false if left out."))},
+              {"drumlist", prop("boolean", QObject::tr("Copy the drum list of a drum track. false if left out."))}},
+             {"track"}),
+      McpTierEdit);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = trackFromArgs(args, false, error);
+      if(!tr)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      const int copies = args.value("copies").toInt(1);
+      if(copies < 1 || copies > 99)
+      {
+        done(QJsonObject(), QObject::tr("copies must be 1 to 99."));
+        return;
+      }
+      int flags = Track::ASSIGN_PROPERTIES;
+      const QString parts = args.value("parts").toString("none"), routes = args.value("routes").toString("all");
+      if(parts == "duplicate")
+        flags |= Track::ASSIGN_DUPLICATE_PARTS;
+      else if(parts == "copy")
+        flags |= Track::ASSIGN_COPY_PARTS;
+      else if(parts == "clone")
+        flags |= Track::ASSIGN_CLONE_PARTS;
+      else if(parts != "none")
+      {
+        done(QJsonObject(), QObject::tr("parts must be none, duplicate, copy or clone."));
+        return;
+      }
+      if(routes == "all")
+        flags |= Track::ASSIGN_ROUTES;
+      else if(routes == "default")
+        flags |= Track::ASSIGN_DEFAULT_ROUTES;
+      else if(routes != "none")
+      {
+        done(QJsonObject(), QObject::tr("routes must be all, default or none."));
+        return;
+      }
+      if(args.value("standard_controllers").toBool(true))
+        flags |= Track::ASSIGN_STD_CTRLS;
+      if(args.value("plugins").toBool())
+        flags |= Track::ASSIGN_PLUGINS;
+      if(args.value("plugin_controllers").toBool())
+        flags |= Track::ASSIGN_PLUGIN_CTRLS;
+      if(args.value("drumlist").toBool())
+        flags |= Track::ASSIGN_DRUMLIST;
+      const std::vector<Track*> added = MusEGlobal::song->duplicateTracks(std::vector<Track*>{tr}, copies, flags);
+      if(added.empty())
+      {
+        done(QJsonObject(), QObject::tr("The track was not duplicated."));
+        return;
+      }
+      QJsonArray names;
+      for(const Track* a : added)
+        names.push_back(a->name());
+      QJsonObject o;
+      o["track"] = tr->name();
+      o["copies"] = names;
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    QJsonObject dir = prop("string", QObject::tr("up or down by one place, or to the top or bottom. Tracks in a folder "
+                                                 "move inside their folder; other tracks move past whole folders."));
+    dir["enum"] = QJsonArray{"up", "down", "top", "bottom"};
+    McpTool t = controlTool("move_tracks",
+      QObject::tr("Moves tracks in the track list, like Move Selected Up/Down/to Top/to Bottom, or like dragging them "
+                  "onto a track (to_track): moving down they go after it, moving up before it; onto a folder they "
+                  "go into it as its last tracks, onto a track in a folder into that folder. A folder moves with its "
+                  "tracks and can not go into a folder. Give direction or to_track. Undoable."),
+      schema({{"tracks", trackListProp(QObject::tr("The tracks to move, they keep their order."))},
+              {"direction", dir},
+              {"to_track", prop("string", QObject::tr("The track to move them onto, as in drag and drop."))}},
+             {"tracks"}),
+      McpTierEdit);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      std::set<Track*> tracks;
+      for(const QJsonValue& v : args.value("tracks").toArray())
+      {
+        Track* tr = MusEGlobal::song->findTrack(v.toString());
+        if(!tr)
+        {
+          done(QJsonObject(), QObject::tr("There is no track named \"%1\".").arg(v.toString()));
+          return;
+        }
+        tracks.insert(tr);
+      }
+      if(tracks.empty())
+      {
+        done(QJsonObject(), QObject::tr("Give the tracks."));
+        return;
+      }
+      const QString dir = args.value("direction").toString();
+      if(args.contains("to_track") == !dir.isEmpty())
+      {
+        done(QJsonObject(), QObject::tr("Give direction or to_track."));
+        return;
+      }
+      if(!dir.isEmpty())
+      {
+        if(dir != "up" && dir != "down" && dir != "top" && dir != "bottom")
+        {
+          done(QJsonObject(), QObject::tr("direction must be up, down, top or bottom."));
+          return;
+        }
+        MusEGlobal::song->moveTracks(std::set<const Track*>(tracks.begin(), tracks.end()),
+                                     dir == "up" || dir == "top", dir == "top" || dir == "bottom");
+      }
+      else
+      {
+        Track* target = MusEGlobal::song->findTrack(args.value("to_track").toString());
+        if(!target)
+        {
+          done(QJsonObject(), QObject::tr("There is no track named \"%1\".").arg(args.value("to_track").toString()));
+          return;
+        }
+        if(tracks.count(target))
+        {
+          done(QJsonObject(), QObject::tr("to_track is one of the tracks that move."));
+          return;
+        }
+        MusEGlobal::song->dragMoveTracks(tracks, target);
+      }
+      QJsonArray order;
+      for(const Track* tr : *MusEGlobal::song->tracks())
+        order.push_back(QJsonObject{{"name", tr->name()},
+                                    {"folder", tr->folder() ? QJsonValue(tr->folder()->name()) : QJsonValue()}});
+      QJsonObject o;
+      o["tracks"] = order;
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("freeze_track",
+      QObject::tr("Freezes a wave or synth track, like Freeze Track: it is rendered offline (from the start of the "
+                  "song to the end of its parts, or of the parts of the midi tracks that play the synth, plus a tail) "
+                  "to a wave file in the project folder, which then plays instead of the track's processing. Its parts "
+                  "(and those of the midi tracks of a synth) can not be edited until it is unfrozen. Starts it and "
+                  "answers at once: follow it with get_export_status, cancel it with cancel_export. The transport "
+                  "must be stopped, the track on and audible and not armed. The song must have been saved once."),
+      schema({{"track", prop("string", QObject::tr("Wave or synth track."))}}, {"track"}),
+      McpTierDangerous);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = trackFromArgs(args, true, error);
+      if(!tr || !(error = exportBusy()).isEmpty() || projectFolder(error).isEmpty())
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      AudioTrack* at = static_cast<AudioTrack*>(tr);
+      if(MusEGlobal::song->freezeTrackStart(at, &error))
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      const QString name = at->name();
+      mcpExport.running = [at]() { return MusEGlobal::song->freezeTrack == at; };
+      mcpExport.report = [at, name]() {
+        ExportReport r;
+        r.jobCount = 1;
+        r.job = 1;
+        r.current = name;
+        const int64_t total = MusEGlobal::song->freezeFrames > 0 ? MusEGlobal::song->freezeFrames : 1;
+        r.percent = int(qBound(int64_t(0), int64_t(MusEGlobal::audio->pos().frame()) * 100 / total, int64_t(99)));
+        return r;
+      };
+      mcpExport.cancel = []() { MusEGlobal::song->freezeTrackCancel(); };
+      mcpExport.result = [name]() {
+        ExportReport r;
+        r.finished = true;
+        r.jobCount = 1;
+        r.job = 1;
+        r.cancelled = MusEGlobal::song->freezeCancelled;
+        Track* t = MusEGlobal::song->findTrack(name);
+        AudioTrack* a = t && t->isAudioTrack() ? static_cast<AudioTrack*>(t) : nullptr;
+        if(a && a->frozen())
+        {
+          // The name is relative to the project folder.
+          const QString f = a->frozenFileName();
+          r.created << (QFileInfo(f).isRelative() ? QDir(MusEGlobal::museProject).filePath(f) : f);
+        }
+        else if(!r.cancelled)
+          r.failed << name;
+        return r;
+      };
+      mcpExport.kind = "freeze";
+      mcpExport.path = name;
+      ++mcpExport.id;
+      mcpExport.hasLast = false;
+      done(exportReportJson(mcpExport.report(), true), QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("unfreeze_track",
+      QObject::tr("Unfreezes a frozen track, like Unfreeze Track: it is processed normally again and can be edited. The "
+                  "frozen wave file is kept. Not undoable, like in the GUI. The transport must be stopped."),
+      schema({{"track", prop("string", QObject::tr("The frozen track."))}}, {"track"}),
+      McpTierEdit);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = trackFromArgs(args, true, error);
+      if(!tr)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      AudioTrack* at = static_cast<AudioTrack*>(tr);
+      if(!at->frozen())
+      {
+        done(QJsonObject(), QObject::tr("\"%1\" is not frozen.").arg(at->name()));
+        return;
+      }
+      if(MusEGlobal::audio->isPlaying())
+      {
+        done(QJsonObject(), QObject::tr("Stop the transport before unfreezing a track."));
+        return;
+      }
+      MusEGlobal::song->unfreezeTrack(at);
+      QJsonObject o;
+      o["track"] = at->name();
+      o["frozen"] = at->frozen();
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("set_folder_folded",
+      QObject::tr("Folds a folder track (its tracks are hidden in the arranger and deselected) or unfolds it. The "
+                  "tracks keep playing. Not undoable, like in the GUI."),
+      schema({{"folder", prop("string", QObject::tr("The folder track."))},
+              {"folded", prop("boolean", QObject::tr("true to fold."))}}, {"folder", "folded"}));
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      Track* tr = MusEGlobal::song->findTrack(args.value("folder").toString());
+      if(!tr || !tr->isFolderTrack())
+      {
+        done(QJsonObject(), QObject::tr("There is no folder named \"%1\".").arg(args.value("folder").toString()));
+        return;
+      }
+      FolderTrack* f = static_cast<FolderTrack*>(tr);
+      const bool fold = args.value("folded").toBool();
+      if(f->folded() != fold)
+      {
+        // As the track list does.
+        f->setFolded(fold);
+        MusEGlobal::song->unselectHiddenTracks();
+        MusEGlobal::song->update(SC_TRACK_MODIFIED | SC_TRACK_RESIZED | SC_TRACK_SELECTION);
+      }
+      QJsonObject o;
+      o["folder"] = f->name();
+      o["folded"] = f->folded();
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("set_track_color",
+      QObject::tr("Sets the color of a track in the arranger, like Set Track Color, or back to the default color of its "
+                  "type. Not undoable, like in the GUI. get_track shows it."),
+      schema({{"track", prop("string", QObject::tr("Track name."))},
+              {"color", prop("string", QObject::tr("A color as #rrggbb (or a color name such as red), or \"default\"."))}},
+             {"track", "color"}));
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      Track* tr = MusEGlobal::song->findTrack(args.value("track").toString());
+      if(!tr)
+      {
+        done(QJsonObject(), QObject::tr("There is no track named \"%1\".").arg(args.value("track").toString()));
+        return;
+      }
+      const QString c = args.value("color").toString().trimmed();
+      if(c.compare("default", Qt::CaseInsensitive) == 0)
+        tr->resetColor();
+      else
+      {
+        const QColor col(c);
+        if(!col.isValid())
+        {
+          done(QJsonObject(), QObject::tr("\"%1\" is not a color. Give #rrggbb, a color name or default.").arg(c));
+          return;
+        }
+        tr->setColor(col);
+      }
+      MusEGlobal::song->update(SC_TRACK_MODIFIED);
+      QJsonObject o;
+      o["track"] = tr->name();
+      o["color"] = tr->color().name();
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("set_track_comment",
+      QObject::tr("Sets the comment (notes) of a track, as in the track's comment window. An empty text removes it. Not "
+                  "undoable, like in the GUI. get_track and list_tracks show it."),
+      schema({{"track", prop("string", QObject::tr("Track name."))},
+              {"comment", prop("string", QObject::tr("The text."))}}, {"track", "comment"}));
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      Track* tr = MusEGlobal::song->findTrack(args.value("track").toString());
+      if(!tr)
+      {
+        done(QJsonObject(), QObject::tr("There is no track named \"%1\".").arg(args.value("track").toString()));
+        return;
+      }
+      tr->setComment(args.value("comment").toString());
+      MusEGlobal::song->update(SC_TRACK_MODIFIED);
+      QJsonObject o;
+      o["track"] = tr->name();
+      o["comment"] = tr->comment();
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+
+  //---------------------------------------------------------
   //   Mixer strips: set_aux_send, set_track_gain, set_track_prefader, set_track_off, set_track_monitor,
   //   set_track_channels, set_automation_type, set_midi_controller, set_midi_track_properties, move_plugin
   //---------------------------------------------------------
@@ -4954,29 +5317,32 @@ void registerMcpTools(McpServer& server)
   {
     McpTool t;
     t.name = "get_export_status";
-    t.description = QObject::tr("The state of the export started with export_mixdown or export_stems: running, the "
-                                "job (file) it is at and its percentage, and the files written so far. When it is "
-                                "finished: the files written, those that failed, and whether it was cancelled.");
+    t.description = QObject::tr("The state of the export or freeze started with export_mixdown, export_stems or "
+                                "freeze_track: running, the job (file) it is at and its percentage, and the files "
+                                "written so far. When it is finished: the files written, those that failed, and "
+                                "whether it was cancelled.");
     t.inputSchema = schema();
     t.handler = [](const QJsonObject&, McpDone done) {
-      if(mcpExport.job)
+      const ExportReport* last = mcpExportResult();
+      if(mcpExportRunning())
         done(exportReportJson(mcpExport.report(), true), QString());
-      else if(mcpExport.hasLast)
-        done(exportReportJson(mcpExport.last, false), QString());
+      else if(last)
+        done(exportReportJson(*last, false), QString());
       else
-        done(QJsonObject(), QObject::tr("No export has been started through MCP since MusE was started."));
+        done(QJsonObject(), QObject::tr("No export or freeze has been started through MCP since MusE was started."));
     };
     server.addTool(t);
   }
   {
     McpTool t = controlTool("cancel_export",
-      QObject::tr("Cancels the running export (started with export_mixdown or export_stems). The file being "
-                  "rendered is incomplete (stems: removed); the others are not started."),
+      QObject::tr("Cancels the running export or freeze (started with export_mixdown, export_stems or freeze_track). "
+                  "The file being rendered is incomplete (stems: removed); the others are not started. A cancelled "
+                  "freeze leaves the track unfrozen."),
       schema());
     t.handler = [](const QJsonObject&, McpDone done) {
-      if(!mcpExport.job)
+      if(!mcpExportRunning())
       {
-        done(QJsonObject(), QObject::tr("No export is running."));
+        done(QJsonObject(), QObject::tr("No export or freeze is running."));
         return;
       }
       mcpExport.cancel();

@@ -111,13 +111,17 @@ int AudioTrack::usedOutputChannels() const
   return used;
 }
 
-// Shows a message and returns true if more channels are in use than can be frozen.
-static bool freezeChannelsError(const AudioTrack* t)
+// Shows a message (or sets 'error' if given) and returns true if more channels are in use than can be frozen.
+static bool freezeChannelsError(const AudioTrack* t, QString* error = nullptr)
 {
   if(t->usedOutputChannels() <= t->channels())
     return false;
-  QMessageBox::warning(MusEGlobal::muse, QObject::tr("Freeze track"),
-    QObject::tr("Only up to two channels can be frozen. This track has routes that use more of its output channels."));
+  const QString msg =
+    QObject::tr("Only up to two channels can be frozen. This track has routes that use more of its output channels.");
+  if(error)
+    *error = msg;
+  else
+    QMessageBox::warning(MusEGlobal::muse, QObject::tr("Freeze track"), msg);
   return true;
 }
 
@@ -496,30 +500,30 @@ bool AudioTrack::frozenFetch(unsigned pos, int chans, unsigned nframes, float** 
 //    Returns true on error, a message has been shown.
 //---------------------------------------------------------
 
-bool Song::freezeTrackStart(AudioTrack* t)
+bool Song::freezeTrackStart(AudioTrack* t, QString* error)
 {
   const QString title = tr("Freeze track");
+  auto fail = [&](const QString& msg) {
+    if(error)
+      *error = msg;
+    else
+      QMessageBox::warning(MusEGlobal::muse, title, msg);
+    return true;
+  };
 
   if(!t || !t->canFreeze())
-  {
-    QMessageBox::warning(MusEGlobal::muse, title, tr("Only wave and synth tracks can be frozen."));
-    return true;
-  }
+  
+    return fail(tr("Only wave and synth tracks can be frozen."));
   if(t->frozen())
-    return true;
-  if(freezeChannelsError(t))
+    return fail(tr("The track is frozen already."));
+  if(freezeChannelsError(t, error))
     return true;
   if(MusEGlobal::audio->isPlaying() || MusEGlobal::audio->bounce() || freezeTrack)
-  {
-    QMessageBox::warning(MusEGlobal::muse, title, tr("Stop the transport before freezing a track."));
-    return true;
-  }
+  
+    return fail(tr("Stop the transport before freezing a track."));
   if(t->off() || t->isMute() || t->recordFlag())
-  {
-    QMessageBox::warning(MusEGlobal::muse, title,
-      tr("The track must be on and audible (not muted, and no other track soloed), and not armed for recording."));
-    return true;
-  }
+  
+    return fail(tr("The track must be on and audible (not muted, and no other track soloed), and not armed for recording."));
 
   // Render to the end of the last part on a wave track, or on the midi tracks that play a synth,
   //  plus a tail for reverbs, synth releases etc.
@@ -544,11 +548,8 @@ bool Song::freezeTrackStart(AudioTrack* t)
       if(mt->drivenSynth() != si)
         continue;
       if(mt->recordFlag())
-      {
-        QMessageBox::warning(MusEGlobal::muse, title,
-          tr("The midi track \"%1\", which plays this synth, is armed for recording.").arg(mt->name()));
-        return true;
-      }
+      
+    return fail(tr("The midi track \"%1\", which plays this synth, is armed for recording.").arg(mt->name()));
       for(ciPart ip = mt->cparts()->begin(); ip != mt->cparts()->end(); ++ip)
       {
         const int64_t e = ip->second->endFrame();
@@ -557,20 +558,15 @@ bool Song::freezeTrackStart(AudioTrack* t)
       }
     }
     if(end_frame == 0)
-    {
-      QMessageBox::warning(MusEGlobal::muse, title,
-        tr("No midi track with parts plays this synth, there is nothing to render."));
-      return true;
-    }
+    
+    return fail(tr("No midi track with parts plays this synth, there is nothing to render."));
   }
   const int64_t frames = end_frame + tail_frames;
 
   QString err;
   if(t->freezeBegin(&err))
-  {
-    QMessageBox::warning(MusEGlobal::muse, title, err);
-    return true;
-  }
+  
+    return fail(err);
 
   freezeFrames = frames;
   freezeCancelled = false;

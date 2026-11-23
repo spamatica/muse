@@ -122,7 +122,8 @@ READ_TOOLS = {"get_song_info", "get_transport", "list_tracks", "get_track", "lis
               "get_audio_part", "get_tempo_map", "get_drum_map", "list_midi_ports", "list_patches", "get_export_status"}
 CONTROL_TOOLS = {"set_patch", "transport", "set_position", "set_loop", "set_click", "set_locators", "set_track_mute", "set_track_solo",
                  "set_track_volume", "set_track_pan", "set_plugin_param", "set_plugin_on", "cancel_export",
-                 "set_part_mute", "set_part_color", "select_parts", "select_tracks", "set_aux_send", "set_track_gain", "set_track_prefader", "set_track_off",
+                 "set_part_mute", "set_part_color", "select_parts", "select_tracks", "set_folder_folded",
+                 "set_track_color", "set_track_comment", "set_aux_send", "set_track_gain", "set_track_prefader", "set_track_off",
                  "set_track_monitor", "set_track_channels", "set_automation_type", "set_midi_controller",
                  "set_midi_track_properties"}
 RECORD_TOOLS = {"set_track_record_arm", "record"}
@@ -131,10 +132,11 @@ EDIT_TOOLS = {"add_track", "rename_track", "add_midi_part", "add_midi_notes", "m
               "load_plugin_preset", "modify_midi_notes", "delete_midi_notes", "set_tempo", "set_time_signature",
               "set_tempo_map_enabled", "set_midi_track_output", "add_marker", "modify_marker", "delete_marker",
               "resize_part", "rename_part", "split_part", "glue_parts", "copy_part", "declone_part", "set_wave_part_volume",
-              "move_plugin", "shrink_parts", "expand_parts", "purge_hidden_events", "global_split"}
+              "move_plugin", "shrink_parts", "expand_parts", "purge_hidden_events", "global_split",
+              "duplicate_track", "move_tracks", "unfreeze_track"}
 DANGEROUS_TOOLS = {"delete_track", "delete_part", "remove_plugin", "save_song", "export_mixdown", "export_stems",
                    "save_mixer_config", "load_mixer_config",
-                   "global_cut", "global_insert"}
+                   "global_cut", "global_insert", "freeze_track"}
 
 check(READ_TOOLS <= set(tools), "tools/list has all the read tools (%d tools)" % len(tools))
 check(all(t["inputSchema"]["type"] == "object" for t in tools.values()), "every tool has an object schema")
@@ -311,7 +313,7 @@ if not has_danger:
     check(fails("delete_track", {"track": "x"}), "Dangerous tool is not available when the tier is off")
 
 # --- Edit tier ------------------------------------------------------------------------------------------
-midi = group_a = group_b = folder = None
+midi = group_a = group_b = folder = wt = None
 part = None
 if has_edit:
     n_before = len(result("list_tracks")[0]["tracks"])
@@ -361,6 +363,65 @@ if has_edit:
         t = track_info(midi["name"])
         check(t is not None and t["folder"] is None, "the track leaves the folder")
         check(fails("move_tracks_to_folder", {"tracks": [midi["name"]], "folder": midi["name"]}), "a track is not a folder")
+
+    # Tracks: duplicate, move, fold, color, comment.
+    def order():
+        return [t["name"] for t in result("list_tracks")[0]["tracks"]]
+
+    if midi and group_a and group_b and folder:
+        r = ok("duplicate_track", {"track": group_a["name"], "copies": 2})
+        check(r is not None and len(r["copies"]) == 2, "duplicate_track, two copies")
+        if r:
+            scratch.extend(r["copies"])
+            o = order()
+            i = o.index(group_a["name"])
+            check(o[i + 1:i + 3] == r["copies"], "the copies come right after the track")
+            ok("undo")
+            o = order()
+            check(not any(c in o for c in r["copies"]), "undo removes the copies")
+            for c in r["copies"]:
+                scratch.remove(c)
+        check(fails("duplicate_track", {"track": folder["name"]}), "a folder is not duplicated")
+        check(fails("duplicate_track", {"track": group_a["name"], "copies": 0}), "duplicate_track with 0 copies is refused")
+        check(fails("duplicate_track", {"track": group_a["name"], "parts": "some"}), "duplicate_track with wrong parts is refused")
+
+        o0 = order()
+        r = ok("move_tracks", {"tracks": [group_b["name"]], "direction": "up"})
+        o1 = order()
+        check(r is not None and o1.index(group_b["name"]) == o0.index(group_b["name"]) - 1, "move_tracks up")
+        ok("move_tracks", {"tracks": [group_b["name"]], "direction": "down"})
+        check(order() == o0, "move_tracks down puts it back")
+        ok("move_tracks", {"tracks": [group_b["name"]], "direction": "top"})
+        check(order()[0] == group_b["name"], "move_tracks top")
+        ok("undo")
+        check(order() == o0, "undo of move_tracks")
+        r = ok("move_tracks", {"tracks": [group_b["name"]], "to_track": folder["name"]})
+        check(r is not None and track_info(group_b["name"])["folder"] == folder["name"], "move_tracks onto a folder puts it in")
+        check(fails("move_tracks", {"tracks": [group_b["name"]]}), "move_tracks needs direction or to_track")
+        check(fails("move_tracks", {"tracks": [group_b["name"]], "direction": "up", "to_track": folder["name"]}),
+              "move_tracks with both is refused")
+        check(fails("move_tracks", {"tracks": [group_b["name"]], "to_track": group_b["name"]}),
+              "move_tracks onto itself is refused")
+
+        if has_control:
+            r = ok("set_folder_folded", {"folder": folder["name"], "folded": True})
+            check(r is not None and r["folded"] is True, "set_folder_folded")
+            check([t for t in result("list_tracks")[0]["tracks"] if t["name"] == folder["name"]][0]["folded"] is True,
+                  "list_tracks shows the folder folded")
+            check(fails("select_tracks", {"tracks": [group_b["name"]]}), "a track in a folded folder can not be selected")
+            ok("set_folder_folded", {"folder": folder["name"], "folded": False})
+            check(fails("set_folder_folded", {"folder": group_a["name"], "folded": True}), "set_folder_folded of a non-folder is refused")
+
+            r = ok("set_track_color", {"track": group_a["name"], "color": "#123456"})
+            check(r is not None and r["color"] == "#123456" and track_info(group_a["name"])["color"] == "#123456", "set_track_color")
+            r = ok("set_track_color", {"track": group_a["name"], "color": "default"})
+            check(r is not None and r["color"] != "#123456", "set_track_color default")
+            check(fails("set_track_color", {"track": group_a["name"], "color": "not a color"}), "a wrong color is refused")
+            r = ok("set_track_comment", {"track": group_a["name"], "comment": "mcp test"})
+            check(r is not None and track_info(group_a["name"]).get("comment") == "mcp test", "set_track_comment")
+            ok("set_track_comment", {"track": group_a["name"], "comment": ""})
+            check("comment" not in track_info(group_a["name"]), "an empty comment removes it")
+        ok("move_tracks_to_folder", {"tracks": [group_b["name"]]})
 
     # Parts and notes.
     if midi:
@@ -1144,6 +1205,36 @@ if has_danger and has_control and midi and part:
     song2 = result("get_song_info")[0]
     check(song2["markerCount"] == song["markerCount"] and len(result("get_tempo_map")[0]["tempos"]) == len(tm["tempos"]),
           "the markers and the tempo map are as they were")
+
+# --- Freeze (Dangerous) ------------------------------------------------------------------------------------
+if has_danger and has_edit and wt:
+    r, err = result("freeze_track", {"track": wt["name"]})
+    if r is not None:
+        check(r["running"] and r["kind"] == "freeze", "freeze_track starts")
+        st0 = result("get_export_status")[0]
+        if st0 and st0["running"]:
+            # An invalid format: it can never start an export, but the busy check comes first.
+            _, e = result("export_mixdown", {"path": PREFIX + "x", "format": "nope"})
+            check(e is not None and "running" in json.dumps(e), "no export while a freeze runs")
+        st = wait_export()
+        check(st is not None and st["finished"] and not st["cancelled"] and len(st["created"]) == 1,
+              "the freeze finishes with a file")
+        t = track_info(wt["name"])
+        check(t is not None and t["frozen"] is True, "the track is frozen")
+        check(fails("freeze_track", {"track": wt["name"]}), "freezing a frozen track is refused")
+        r = ok("unfreeze_track", {"track": wt["name"]})
+        check(r is not None and r["frozen"] is False, "unfreeze_track")
+        check(fails("unfreeze_track", {"track": wt["name"]}), "unfreeze_track of a track that is not frozen is refused")
+        for f in (st["created"] if st else []):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+    elif err and "project folder" in json.dumps(err):
+        print("      the song has not been saved, the freeze tests are skipped")
+    else:
+        check(False, "freeze_track: %s" % json.dumps(err)[:300])
+    check(fails("freeze_track", {"track": midi["name"] if midi else "x"}), "freeze_track of a midi track is refused")
 
 # --- Dangerous tier and clean up ----------------------------------------------------------------------------
 if has_danger:

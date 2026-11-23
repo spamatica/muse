@@ -333,8 +333,9 @@ class Song : public QObject {
       int64_t freezeFrames;
       // True when the user cancelled the freeze in progress.
       bool freezeCancelled;
-      // Start freezing a wave or synth track. Returns true on error (a message has been shown).
-      bool freezeTrackStart(AudioTrack*);
+      // Start freezing a wave or synth track. Returns true on error: a message has been shown, or if 'error' is
+      //  given it is set instead.
+      bool freezeTrackStart(AudioTrack*, QString* error = nullptr);
       // Finish a freeze. Called when the transport has stopped.
       void freezeTrackFinish();
       // Make a frozen track play its normal processing again.
@@ -372,9 +373,14 @@ class Song : public QObject {
       //  track goes in the folder too. Otherwise the track is not in a folder. A folder is moved with its tracks,
       //  and it can not be moved into a folder. Undoable.
       void dragMoveTrack(Track* dragged, Track* target);
+      // The same for the given tracks (and the tracks of given folders). The reference track (default: the first of
+      //  them in the track list) is the dragged one: it decides whether they move down (after the target) or up.
+      void dragMoveTracks(const std::set<Track*>& tracks, Track* target, Track* reference = nullptr);
       // Moves the selected tracks up or down in the track list, or all the way to the top or bottom if full.
       // The tracks in a folder move inside the folder, the others move with the folders as a whole. Undoable.
       void moveSelectedTracks(bool up, bool full);
+      // The same for the given tracks.
+      void moveTracks(const std::set<const Track*>& tracks, bool up, bool full);
       // Gives the track list the order, and the tracks their folders. Does nothing if nothing changes. Undoable.
       void applyTrackOrder(const std::vector<Track*>& order, const std::map<Track*, FolderTrack*>& folders);
       void resolveSongfileReferences();
@@ -738,6 +744,9 @@ class Song : public QObject {
       Track* addTrack(Track::TrackType type, Track* insertAt = 0);
       Track* addNewTrack(QAction* action, Track* insertAt = 0);
       void duplicateTracks(Track* t = nullptr);
+      // Without the dialog: Makes 'copies' copies of each of the tracks (not folders) with the Track::ASSIGN_ flags,
+      //  right after the track, with new unique names. Undoable. Returns the new tracks.
+      std::vector<Track*> duplicateTracks(const std::vector<Track*>& tracks, int copies, int flags);
       void setDirty() { emit sigDirty(); }
 
       /* restarts recording from last start position
