@@ -36,6 +36,19 @@ namespace MusECore {
 
 class AudioOutput;
 
+// A part of the song to mix down.
+struct MixdownSection {
+      QString name;
+      unsigned startFrame;
+      unsigned endFrame;
+      };
+
+// One section for each named marker: from the marker to the next marker (of any kind),
+//  the last one until the end of the song. Sorted by time.
+std::vector<MixdownSection> markerMixdownSections();
+// Makes a string usable as part of a file name.
+QString sanitizeFileName(const QString& s);
+
 //---------------------------------------------------------
 //   MarkerMixdown
 //    Renders one downmix file for each named marker: from the marker to the next

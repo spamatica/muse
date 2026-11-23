@@ -144,6 +144,7 @@ QT5_WRAP_CPP (components_mocs
 #       spinbox.h  
 #       spinboxFP.h  
       splitter.h  
+      stemexportdialog.h
       #src_resampler_settings.h
 #       swidget.h  
       synctoolbar.h
@@ -204,6 +205,7 @@ file (GLOB components_ui_files
       shortcutconfigbase.ui  
       snooperbase.ui
       songinfo.ui  
+      stemexportdialogbase.ui
       #src_resampler_settings_base.ui
       synthdialogbase.ui
       synthconfigbase.ui  
@@ -321,6 +323,7 @@ file (GLOB components_source_files
 #       spinbox.cpp 
 #       spinboxFP.cpp 
       splitter.cpp  
+      stemexportdialog.cpp
       #src_resampler_settings.cpp
 #       swidget.cpp 
       synctoolbar.cpp

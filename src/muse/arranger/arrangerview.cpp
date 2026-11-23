@@ -925,6 +925,17 @@ void ArrangerView::updateScoreMenus()
     }
 }
 
+// The action of the given track type (QAction::data()) in the group made by MusEGui::populateAddTrack().
+// Do not use the position in the group: It changes when entries are added to the menu (as the folder was),
+//  and the shortcuts would end up on the wrong entries.
+static QAction* trackActionOfType(QActionGroup* group, MusECore::Track::TrackType type)
+{
+  for(QAction* a : group->actions())
+    if(a->data().toInt() == int(type))
+      return a;
+  return nullptr;
+}
+
 // populate both add and insert menus with track types
 void ArrangerView::populateAddTrack()
 {
@@ -932,15 +943,15 @@ void ArrangerView::populateAddTrack()
     addTrack->clear();
     QActionGroup *addGroup = MusEGui::populateAddTrack(addTrack, true, false, false);
 
-    int idx = 0;
-    trackAMidiAction   = addGroup->actions().at(idx++);
-    trackADrumAction   = addGroup->actions().at(idx++);
-    trackAWaveAction   = addGroup->actions().at(idx++);
-    trackAOutputAction = addGroup->actions().at(idx++);
-    trackAGroupAction  = addGroup->actions().at(idx++);
-    trackAInputAction  = addGroup->actions().at(idx++);
-    trackAAuxAction    = addGroup->actions().at(idx++);
-    trackASynthAction  = addGroup->actions().at(idx++);
+    trackAMidiAction   = trackActionOfType(addGroup, MusECore::Track::MIDI);
+    trackADrumAction   = trackActionOfType(addGroup, MusECore::Track::DRUM);
+    trackAWaveAction   = trackActionOfType(addGroup, MusECore::Track::WAVE);
+    trackAOutputAction = trackActionOfType(addGroup, MusECore::Track::AUDIO_OUTPUT);
+    trackAGroupAction  = trackActionOfType(addGroup, MusECore::Track::AUDIO_GROUP);
+    trackAInputAction  = trackActionOfType(addGroup, MusECore::Track::AUDIO_INPUT);
+    trackAAuxAction    = trackActionOfType(addGroup, MusECore::Track::AUDIO_AUX);
+    trackAFolderAction = trackActionOfType(addGroup, MusECore::Track::FOLDER);
+    trackASynthAction  = trackActionOfType(addGroup, MusECore::Track::AUDIO_SOFTSYNTH);
 
     trackAMidiAction->setShortcutContext(Qt::ApplicationShortcut);
     trackADrumAction->setShortcutContext(Qt::ApplicationShortcut);
@@ -949,21 +960,22 @@ void ArrangerView::populateAddTrack()
     trackAGroupAction->setShortcutContext(Qt::ApplicationShortcut);
     trackAInputAction->setShortcutContext(Qt::ApplicationShortcut);
     trackAAuxAction->setShortcutContext(Qt::ApplicationShortcut);
+    trackAFolderAction->setShortcutContext(Qt::ApplicationShortcut);
     trackASynthAction->setShortcutContext(Qt::ApplicationShortcut);
 
     // populate insert track menu
     insertTrack->clear();
     QActionGroup *insertGroup = MusEGui::populateAddTrack(insertTrack, true, true, false);
 
-    idx = 0;
-    trackIMidiAction   = insertGroup->actions().at(idx++);
-    trackIDrumAction   = insertGroup->actions().at(idx++);
-    trackIWaveAction   = insertGroup->actions().at(idx++);
-    trackIOutputAction = insertGroup->actions().at(idx++);
-    trackIGroupAction  = insertGroup->actions().at(idx++);
-    trackIInputAction  = insertGroup->actions().at(idx++);
-    trackIAuxAction    = insertGroup->actions().at(idx++);
-    trackISynthAction  = insertGroup->actions().at(idx++);
+    trackIMidiAction   = trackActionOfType(insertGroup, MusECore::Track::MIDI);
+    trackIDrumAction   = trackActionOfType(insertGroup, MusECore::Track::DRUM);
+    trackIWaveAction   = trackActionOfType(insertGroup, MusECore::Track::WAVE);
+    trackIOutputAction = trackActionOfType(insertGroup, MusECore::Track::AUDIO_OUTPUT);
+    trackIGroupAction  = trackActionOfType(insertGroup, MusECore::Track::AUDIO_GROUP);
+    trackIInputAction  = trackActionOfType(insertGroup, MusECore::Track::AUDIO_INPUT);
+    trackIAuxAction    = trackActionOfType(insertGroup, MusECore::Track::AUDIO_AUX);
+    trackIFolderAction = trackActionOfType(insertGroup, MusECore::Track::FOLDER);
+    trackISynthAction  = trackActionOfType(insertGroup, MusECore::Track::AUDIO_SOFTSYNTH);
 
     trackIMidiAction->setShortcutContext(Qt::ApplicationShortcut);
     trackIDrumAction->setShortcutContext(Qt::ApplicationShortcut);
@@ -972,6 +984,7 @@ void ArrangerView::populateAddTrack()
     trackIGroupAction->setShortcutContext(Qt::ApplicationShortcut);
     trackIInputAction->setShortcutContext(Qt::ApplicationShortcut);
     trackIAuxAction->setShortcutContext(Qt::ApplicationShortcut);
+    trackIFolderAction->setShortcutContext(Qt::ApplicationShortcut);
     trackISynthAction->setShortcutContext(Qt::ApplicationShortcut);
 }
 
@@ -1016,6 +1029,7 @@ void ArrangerView::updateShortcuts()
       trackAGroupAction->setShortcut(shortcuts[SHRT_ADD_AUDIO_GROUP].key);
       trackAInputAction->setShortcut(shortcuts[SHRT_ADD_AUDIO_INPUT].key);
       trackAAuxAction->setShortcut(shortcuts[SHRT_ADD_AUDIO_AUX].key);
+      trackAFolderAction->setShortcut(shortcuts[SHRT_ADD_FOLDER_TRACK].key);
       trackASynthAction->setShortcut(shortcuts[SHRT_ADD_SYNTH_TRACK].key);
 
       trackIMidiAction->setShortcut(shortcuts[SHRT_INSERT_MIDI_TRACK].key);
@@ -1025,6 +1039,7 @@ void ArrangerView::updateShortcuts()
       trackIGroupAction->setShortcut(shortcuts[SHRT_INSERT_AUDIO_GROUP].key);
       trackIInputAction->setShortcut(shortcuts[SHRT_INSERT_AUDIO_INPUT].key);
       trackIAuxAction->setShortcut(shortcuts[SHRT_INSERT_AUDIO_AUX].key);
+      trackIFolderAction->setShortcut(shortcuts[SHRT_INSERT_FOLDER_TRACK].key);
       trackISynthAction->setShortcut(shortcuts[SHRT_INSERT_SYNTH_TRACK].key);
 
 
@@ -1061,9 +1076,11 @@ void ArrangerView::updateShortcuts()
 void ArrangerView::clipboardChanged()
       {
       bool flag = false;
-      if(QApplication::clipboard()->mimeData()->hasFormat(QString("text/x-muse-midipartlist")) ||
-         QApplication::clipboard()->mimeData()->hasFormat(QString("text/x-muse-wavepartlist")) ||
-         QApplication::clipboard()->mimeData()->hasFormat(QString("text/x-muse-mixedpartlist")))
+      // There is no clipboard data at all on some platforms (for example Qt's offscreen platform).
+      const QMimeData* md = QApplication::clipboard()->mimeData();
+      if(md && (md->hasFormat(QString("text/x-muse-midipartlist")) ||
+                md->hasFormat(QString("text/x-muse-wavepartlist")) ||
+                md->hasFormat(QString("text/x-muse-mixedpartlist"))))
         flag = true;
       
       editPasteAction->setEnabled(flag);

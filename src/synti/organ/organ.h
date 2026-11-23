@@ -115,8 +115,10 @@ static const int VELO       = 17 + MusECore::CTRL_RPN14_OFFSET;
 struct SynthCtrl {
       const char* name;
       int num;
-      int val;
+      int val;          // default, as shown in the gui (without the 8192 bias)
       };
+
+static const int ORGAN_NUM_CONTROLLER = 19;
 
 //---------------------------------------------------------
 //   Voice
@@ -130,6 +132,7 @@ struct Voice {
       double velocity;
 
       int state1, state2;
+      int level1, level2;     // current attenuation of the envelopes (centibel)
       Envelope envL1, envL2, envL3;
       Envelope envH1, envH2, envH3;
 
@@ -179,6 +182,9 @@ class Organ : public Mess {
 
       double harm0, harm1, harm2, harm3, harm4, harm5;
 
+      // Current value of each controller, as received (with the bias).
+      int ctrlVal[ORGAN_NUM_CONTROLLER];
+
       Voice voices[VOICES];
 
       static float* sine_table;
@@ -187,6 +193,8 @@ class Organ : public Mess {
 
       void noteoff(int channel, int pitch);
       void setController(int ctrl, int val);
+      void resetControllers();
+      int msToTicks(int ms) const;
 
 
       OrganGui* gui;
@@ -209,7 +217,7 @@ class Organ : public Mess {
       virtual void setNativeGeometry(int x, int y, int w, int h);
       virtual void setNativeGuiWindowTitle(const char*) const;
       virtual bool sysex(int, const unsigned char*);
-      static SynthCtrl synthCtrl[];
+      static const SynthCtrl synthCtrl[];
       Organ(int sampleRate);
       virtual ~Organ();
       bool init(const char* name);

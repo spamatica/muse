@@ -58,8 +58,10 @@ class AudioDevice {
       float _syncTimeoutCounter; // In seconds.
       int _dummyState;
       unsigned int _dummyPos;
-      volatile int _dummyStatePending;
-      volatile unsigned int _dummyPosPending;
+      // Commands from the GUI thread (startTransport() etc.), -1 if none. Taken by processTransport().
+      // The position is set before the state, and taken after it.
+      std::atomic<int> _dummyStatePending;
+      std::atomic<unsigned int> _dummyPosPending;
 
       // The DSP load in percent, as measured around the audio process in processTransport().
       std::atomic<float> _dspLoad;

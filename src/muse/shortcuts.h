@@ -197,6 +197,7 @@ enum {
 
     SHRT_AUDIO_BOUNCE_TO_TRACK, //Default: undefined
     SHRT_AUDIO_BOUNCE_TO_FILE, //Default: undefined
+    SHRT_AUDIO_EXPORT_STEMS, //Default: undefined
     SHRT_AUDIO_RESTART, //Default: undefined
 
     // REMOVE Tim. automation.
@@ -219,6 +220,7 @@ enum {
     SHRT_ADD_AUDIO_GROUP, //Default: undefined
     SHRT_ADD_AUDIO_INPUT, //Default: undefined
     SHRT_ADD_AUDIO_AUX, //Default: undefined
+    SHRT_ADD_FOLDER_TRACK, //Default: Shift+F
 
     SHRT_INSERT_MIDI_TRACK, //Default: undefined
     SHRT_INSERT_DRUM_TRACK, //Default: undefined
@@ -229,6 +231,7 @@ enum {
     SHRT_INSERT_AUDIO_GROUP, //Default: undefined
     SHRT_INSERT_AUDIO_INPUT, //Default: undefined
     SHRT_INSERT_AUDIO_AUX, //Default: undefined
+    SHRT_INSERT_FOLDER_TRACK, //Default: undefined
 
     SHRT_RESET_MIDI, //Ctrl+Alt+Z
 

@@ -554,10 +554,12 @@ QStringList pluginGetLinuxVstDirectories()
 #endif
   if(vstPath.isEmpty())
   {
+    // Assign to the outer vstPath (this used to declare a new one, which threw the
+    //  default directories away when neither LXVST_PATH nor VST_PATH was set).
 #if (QT_VERSION >= QT_VERSION_CHECK(5, 10, 0))
-    QString vstPath = qEnvironmentVariable("VST_PATH");
+    vstPath = qEnvironmentVariable("VST_PATH");
 #else
-    QString vstPath = QString::fromLocal8Bit(qgetenv("VST_PATH"));
+    vstPath = QString::fromLocal8Bit(qgetenv("VST_PATH"));
 #endif
     if(vstPath.isEmpty())
     {

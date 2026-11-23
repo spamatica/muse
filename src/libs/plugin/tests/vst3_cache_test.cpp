@@ -133,7 +133,9 @@ int main(int argc, char** argv)
   qputenv("APPDIR", appdir.toLocal8Bit());
 
   // Plugin directory: the real plugins, one of them in a sub directory, plus a broken bundle.
-  const QString vst3 = root + "/vst3";
+  // Named like the user's ~/.vst3, which has the suffix "vst3" itself and must not be
+  //  taken for a bundle (that made every start rescan all plugins).
+  const QString vst3 = root + "/.vst3";
   QDir().mkpath(vst3 + "/sub/deeper");
   QStringList linked;
   for(int i = 0; i < real.size(); ++i)
