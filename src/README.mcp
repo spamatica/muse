@@ -29,7 +29,7 @@ Code:
   AGENTS.md                           short description for coding agents
 
 
-The tools (63)
+The tools (71)
 --------------
 
 Read (always on):
@@ -39,13 +39,16 @@ Read (always on):
 
 Control (reversible, not undoable, applied like the mixer strips do):
   transport, set_position, set_loop, set_click, set_locators, set_track_mute, set_track_solo,
-  set_track_volume, set_track_pan, set_plugin_param, set_plugin_on, set_patch, cancel_export
+  set_track_volume, set_track_pan, set_plugin_param, set_plugin_on, set_patch, cancel_export,
+  set_part_mute (not undoable, like the arranger's mute tool)
 
 Record:
   set_track_record_arm, record
 
 Edit (undoable unless the GUI's own action is not):
   add_track, rename_track, add_synth_track, move_tracks_to_folder, add_midi_part, move_part,
+  resize_part, rename_part, split_part, glue_parts, copy_part (copy or clone), declone_part,
+  set_wave_part_volume (volume and fades),
   add_midi_notes, modify_midi_notes, delete_midi_notes, add_plugin, save_plugin_preset,
   load_plugin_preset, add_route, remove_route (not undoable, like in the GUI), set_tempo,
   set_time_signature, set_tempo_map_enabled (not undoable), set_midi_track_output (not undoable),
@@ -90,7 +93,7 @@ The Edit tier makes scratch tracks (mcptest<pid>-...), the Dangerous tier delete
 the export tests in a scratch folder in the project folder, which it removes. It never records and
 never saves the song.
 
-A run headless, that passes completely (195 checks on 2026-11-23): use the stems test project and
+A run headless, that passes completely (222 checks on 2026-11-23): use the stems test project and
 give MusE a home of its own (without that it may quit while loading the song):
 
   WORK=/some/scratch/folder
@@ -133,6 +136,7 @@ drum editor, wave editor, list editor, master track, marker window). Fill in the
 
 Missing:     not possible through MCP at all
 Partly:      readable, or some of it possible
+Done:        has a tool now (the tool is named in the Reuse column)
 
  #  Area / function                        State    Tier       Reuse                                   Priority
 --  -------------------------------------  -------  ---------  --------------------------------------  --------
@@ -144,15 +148,15 @@ Partly:      readable, or some of it possible
  4  Clear automation, take snapshot        Missing  edit       MusE::clearAutomation(),
                                                                takeAutomationSnapshot()
     PARTS (arranger)
- 5  Change part length                     Missing  edit       UndoOp ModifyPartLength
- 6  Change part start (left edge)          Missing  edit       UndoOp ModifyPartStart
- 7  Rename part                            Missing  edit       UndoOp ModifyPartName
- 8  Mute part                              Missing  control    (part mute, as the part popup menu)
- 9  Split part at a position               Missing  edit       functions.cpp split_part()
-10  Glue / super glue parts                Missing  edit       functions.cpp merge_parts()
-11  Copy, paste, duplicate, clone, de-clone Missing  edit       arranger copy/paste code (pcanvas.cpp)
-12  Wave part volume and fades             Partly   edit       read in list_parts; set like the
-                                                               part volume/fade handles do
+ 5  Change part length                     Done     edit       resize_part
+ 6  Change part start (left edge)          Done     edit       resize_part
+ 7  Rename part                            Done     edit       rename_part
+ 8  Mute part                              Done     control    set_part_mute
+ 9  Split part at a position               Done     edit       split_part
+10  Glue / super glue parts                Done     edit       glue_parts
+11  Copy, duplicate, clone, de-clone       Done     edit       copy_part, declone_part (no clipboard
+                                                               paste: copy_part names the target)
+12  Wave part volume and fades             Done     edit       set_wave_part_volume
 13  Part color                             Missing  edit       (cosmetic)
 14  Shrink / expand parts to events,       Missing  edit       functions.cpp shrink_parts(),
     purge hidden events                                        expand_parts(), clean_parts()
@@ -217,7 +221,7 @@ appearance, help).
 
 Suggested order (my view, by what an assistant working in a song needs most):
   1. Automation (1-4)
-  2. Part editing (5-12)
+  2. Part editing (5-12): done; 13-15 (color, shrink/expand, global cut/insert/split) are left
   3. Mixer and track completeness (24-27, 31-33)
   4. Midi functions and controllers (16-22)
   5. File import/export (42-44)

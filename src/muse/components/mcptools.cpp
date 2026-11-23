@@ -34,6 +34,7 @@
 #include "app.h"
 #include "audiodev.h"
 #include "event.h"
+#include "functions.h"
 #include "gconfig.h"
 #include "globals.h"
 #include "marker/marker.h"
@@ -232,6 +233,8 @@ QJsonObject partJson(const Part* part)
     o["volumeDb"] = round2(toDb(part->volume()));
     o["fadeInFrames"] = double(part->fadeInFrames());
     o["fadeOutFrames"] = double(part->fadeOutFrames());
+    o["fadeInSeconds"] = round4(double(part->fadeInFrames()) / sampleRate());
+    o["fadeOutSeconds"] = round4(double(part->fadeOutFrames()) / sampleRate());
   }
   else
   {
@@ -742,6 +745,24 @@ Part* partFromArgs(const QJsonObject& args, const char* trackKey, const char* ti
       return i->second;
   error = QObject::tr("Track \"%1\" has no part starting at tick %2.").arg(name).arg(tick);
   return nullptr;
+}
+
+
+// The part of the track that starts at the tick, or null.
+Part* partAt(const Track* t, unsigned tick)
+{
+  const PartList* pl = t->cparts();
+  for(ciPart i = pl->begin(); i != pl->end(); ++i)
+    if(i->second->tick() == tick)
+      return i->second;
+  return nullptr;
+}
+
+// Makes the song long enough for a part that ends at the tick, as the arranger does.
+void extendSongTo(unsigned endTick)
+{
+  if(MusEGlobal::song->len() < endTick)
+    MusEGlobal::song->setLen(endTick);
 }
 
 
@@ -2458,6 +2479,359 @@ void registerMcpTools(McpServer& server)
       o["track"] = dst->name();
       o["startTick"] = double(nt);
       done(o, QString());
+    };
+    server.addTool(t);
+  }
+
+
+  //---------------------------------------------------------
+  //   resize_part / rename_part / set_part_mute / split_part / glue_parts / copy_part / declone_part
+  //   set_wave_part_volume
+  //---------------------------------------------------------
+  {
+    McpTool t = controlTool("resize_part",
+      QObject::tr("Moves the start and/or the end of a part, like dragging its edges in the arranger. The events stay "
+                  "where they are in the song (events outside the part are hidden, not deleted), unless move_events: "
+                  "then they move with the edge that changes (as with Ctrl when dragging). Moving the start past the "
+                  "first event moves all events by the same amount so that the first one is at the new start, as in "
+                  "the arranger. Undoable; changing both "
+                  "edges is two undo steps. The answer has the new start tick, which names the part from then on."),
+      schema({{"track", prop("string", QObject::tr("Track of the part."))},
+              {"part_start_tick", prop("integer", QObject::tr("Start tick of the part, from list_parts."))},
+              {"new_start_tick", prop("integer", QObject::tr("New start (left edge) in ticks."))},
+              {"new_end_tick", prop("integer", QObject::tr("New end (right edge) in ticks."))},
+              {"move_events", prop("boolean", QObject::tr("true to move the events with the edge. false if left out."))}},
+             {"track", "part_start_tick"}),
+      McpTierEdit);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = nullptr;
+      Part* part = partFromArgs(args, "track", "part_start_tick", error, &tr);
+      if(!part)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      const bool hasStart = args.value("new_start_tick").isDouble(), hasEnd = args.value("new_end_tick").isDouble();
+      if(!hasStart && !hasEnd)
+      {
+        done(QJsonObject(), QObject::tr("Give new_start_tick, new_end_tick or both."));
+        return;
+      }
+      const unsigned start = hasStart ? unsigned(qMax(0.0, args.value("new_start_tick").toDouble())) : part->tick();
+      const unsigned end = hasEnd ? unsigned(qMax(0.0, args.value("new_end_tick").toDouble())) : part->endTick();
+      if(end <= start)
+      {
+        done(QJsonObject(), QObject::tr("The end must be after the start."));
+        return;
+      }
+      if(start != part->tick())
+      {
+        Part* other = partAt(tr, start);
+        if(other && other != part)
+        {
+          done(QJsonObject(), QObject::tr("Another part of the track starts at tick %1.").arg(start));
+          return;
+        }
+      }
+      const bool moveEvents = args.value("move_events").toBool();
+      if(start != part->tick())
+      {
+        resize_part(tr, part, start, ResizeDirection::RESIZE_TO_THE_LEFT, false, moveEvents);
+        part = partAt(tr, start);
+      }
+      if(part && end != part->endTick())
+        resize_part(tr, part, end - part->tick(), ResizeDirection::RESIZE_TO_THE_RIGHT, false, moveEvents);
+      if(!part)
+      {
+        done(QJsonObject(), QObject::tr("The part was not resized."));
+        return;
+      }
+      extendSongTo(part->endTick());
+      done(partJson(part), QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("rename_part",
+      QObject::tr("Renames a part. Undoable."),
+      schema({{"track", prop("string", QObject::tr("Track of the part."))},
+              {"part_start_tick", prop("integer", QObject::tr("Start tick of the part, from list_parts."))},
+              {"name", prop("string", QObject::tr("The new name."))}},
+             {"track", "part_start_tick", "name"}),
+      McpTierEdit);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Part* part = partFromArgs(args, "track", "part_start_tick", error);
+      if(!part)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      const QString name = args.value("name").toString();
+      if(name != part->name())
+        MusEGlobal::song->applyOperation(UndoOp(UndoOp::ModifyPartName, part, part->name(), name));
+      done(partJson(part), QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("set_part_mute",
+      QObject::tr("Mutes or unmutes a part, like the arranger's mute tool. Not undoable, like there."),
+      schema({{"track", prop("string", QObject::tr("Track of the part."))},
+              {"part_start_tick", prop("integer", QObject::tr("Start tick of the part, from list_parts."))},
+              {"mute", prop("boolean", QObject::tr("true to mute."))}},
+             {"track", "part_start_tick", "mute"}));
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Part* part = partFromArgs(args, "track", "part_start_tick", error);
+      if(!part)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      const bool mute = args.value("mute").toBool();
+      if(part->mute() != mute)
+      {
+        part->setMute(mute);
+        MusEGlobal::song->update(SC_PART_MODIFIED);
+      }
+      done(partJson(part), QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("split_part",
+      QObject::tr("Splits a part in two at a position, like the arranger's cut tool. Undoable. The answer has both "
+                  "parts."),
+      schema({{"track", prop("string", QObject::tr("Track of the part."))},
+              {"part_start_tick", prop("integer", QObject::tr("Start tick of the part, from list_parts."))},
+              {"at_tick", prop("integer", QObject::tr("Where to split, in ticks from the start of the song. Must be "
+                                                       "inside the part."))}},
+             {"track", "part_start_tick", "at_tick"}),
+      McpTierEdit);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = nullptr;
+      Part* part = partFromArgs(args, "track", "part_start_tick", error, &tr);
+      if(!part)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      const double at = args.value("at_tick").toDouble(-1.0);
+      const unsigned start = part->tick();
+      if(!(at > double(start) && at < double(part->endTick())))
+      {
+        done(QJsonObject(), QObject::tr("at_tick must be inside the part (%1 to %2).").arg(start).arg(part->endTick()));
+        return;
+      }
+      if(!split_part(part, int(at)))
+      {
+        done(QJsonObject(), QObject::tr("The part was not split."));
+        return;
+      }
+      QJsonArray parts;
+      for(unsigned tick : {start, unsigned(at)})
+        if(Part* p = partAt(tr, tick))
+          parts.push_back(partJson(p));
+      QJsonObject o;
+      o["parts"] = parts;
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    QJsonObject ticks;
+    ticks["type"] = "array";
+    ticks["items"] = prop("integer", QObject::tr("Start tick of a part."));
+    ticks["description"] = QObject::tr("Start ticks of the parts to glue (at least two), from list_parts.");
+    McpTool t = controlTool("glue_parts",
+      QObject::tr("Glues parts of one track into one part, from the start of the first to the end of the last, with all "
+                  "their events (like Super Glue). The new part gets the name and settings of the first one. Undoable."),
+      schema({{"track", prop("string", QObject::tr("Track of the parts."))}, {"part_start_ticks", ticks}},
+             {"track", "part_start_ticks"}),
+      McpTierEdit);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      const QString name = args.value("track").toString();
+      Track* tr = MusEGlobal::song->findTrack(name);
+      if(!tr || tr->isFolderTrack() || !(tr->type() == Track::WAVE || tr->isMidiTrack()))
+      {
+        done(QJsonObject(), QObject::tr("There is no midi, drum or wave track named \"%1\".").arg(name));
+        return;
+      }
+      std::set<const Part*> parts;
+      unsigned first = UINT_MAX;
+      for(const QJsonValue& v : args.value("part_start_ticks").toArray())
+      {
+        const unsigned tick = unsigned(qMax(0.0, v.toDouble(-1.0)));
+        Part* p = v.isDouble() ? partAt(tr, tick) : nullptr;
+        if(!p)
+        {
+          done(QJsonObject(), QObject::tr("Track \"%1\" has no part starting at tick %2.").arg(name).arg(v.toDouble()));
+          return;
+        }
+        parts.insert(p);
+        first = qMin(first, tick);
+      }
+      if(parts.size() < 2)
+      {
+        done(QJsonObject(), QObject::tr("Give at least two parts."));
+        return;
+      }
+      if(!merge_parts(parts))
+      {
+        done(QJsonObject(), QObject::tr("The parts were not glued."));
+        return;
+      }
+      Part* p = partAt(tr, first);
+      done(p ? partJson(p) : QJsonObject(), p ? QString() : QObject::tr("The parts were not glued."));
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("copy_part",
+      QObject::tr("Copies a part to a position, on the same or another track of the same type. Undoable. A copy is "
+                  "independent of the original; with clone: true it is a clone instead, which shares its events with "
+                  "the original (editing one changes all clones). Another part may not start at the same tick."),
+      schema({{"track", prop("string", QObject::tr("Track of the part."))},
+              {"part_start_tick", prop("integer", QObject::tr("Start tick of the part, from list_parts."))},
+              {"new_start_tick", prop("integer", QObject::tr("Start of the copy in ticks."))},
+              {"new_track", prop("string", QObject::tr("Track for the copy. The same track if left out."))},
+              {"clone", prop("boolean", QObject::tr("true for a clone. false (an independent copy) if left out."))}},
+             {"track", "part_start_tick", "new_start_tick"}),
+      McpTierEdit);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* src = nullptr;
+      Part* part = partFromArgs(args, "track", "part_start_tick", error, &src);
+      if(!part)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      if(!args.value("new_start_tick").isDouble())
+      {
+        done(QJsonObject(), QObject::tr("new_start_tick is needed."));
+        return;
+      }
+      Track* dst = src;
+      if(args.contains("new_track"))
+      {
+        dst = MusEGlobal::song->findTrack(args.value("new_track").toString());
+        if(!dst || dst->isFolderTrack() || dst->type() != src->type())
+        {
+          done(QJsonObject(), QObject::tr("new_track must be an existing track of the same type."));
+          return;
+        }
+      }
+      const unsigned nt = unsigned(qMax(0.0, args.value("new_start_tick").toDouble()));
+      if(partAt(dst, nt))
+      {
+        done(QJsonObject(), QObject::tr("A part of \"%1\" already starts at tick %2.").arg(dst->name()).arg(nt));
+        return;
+      }
+      // Gives the new part a new serial number, as the arranger does.
+      Part* np = args.value("clone").toBool() ? part->createNewClone() : part->duplicate();
+      np->setTick(nt);
+      np->setTrack(dst);
+      MusEGlobal::song->applyOperation(UndoOp(UndoOp::AddPart, np));
+      extendSongTo(np->endTick());
+      QJsonObject o = partJson(np);
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("declone_part",
+      QObject::tr("Makes a clone an independent part (De-clone in the arranger): it keeps its events but no longer "
+                  "shares them with the other clones. Undoable."),
+      schema({{"track", prop("string", QObject::tr("Track of the part."))},
+              {"part_start_tick", prop("integer", QObject::tr("Start tick of the part, from list_parts."))}},
+             {"track", "part_start_tick"}),
+      McpTierEdit);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = nullptr;
+      Part* part = partFromArgs(args, "track", "part_start_tick", error, &tr);
+      if(!part)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      if(!part->hasClones())
+      {
+        done(QJsonObject(), QObject::tr("The part is not a clone."));
+        return;
+      }
+      // Not a member of any clone chain.
+      Part* np = part->duplicate();
+      Undo operations;
+      operations.push_back(UndoOp(UndoOp::DeletePart, part));
+      operations.push_back(UndoOp(UndoOp::AddPart, np));
+      MusEGlobal::song->applyOperationGroup(operations);
+      done(partJson(np), QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("set_wave_part_volume",
+      QObject::tr("Sets the volume and/or the fade in and fade out of a wave part, like its handles in the arranger. "
+                  "Undoable. The fades are linear in time; the fade in and fade out together can not be longer than the "
+                  "part."),
+      schema({{"track", prop("string", QObject::tr("Wave track of the part."))},
+              {"part_start_tick", prop("integer", QObject::tr("Start tick of the part, from list_parts."))},
+              {"volume_db", prop("number", QObject::tr("Volume in dB, 0 is unchanged, up to +12. -60 or less is silence."))},
+              {"fade_in_seconds", prop("number", QObject::tr("Length of the fade in, 0 for none."))},
+              {"fade_out_seconds", prop("number", QObject::tr("Length of the fade out, 0 for none."))}},
+             {"track", "part_start_tick"}),
+      McpTierEdit);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Part* part = partFromArgs(args, "track", "part_start_tick", error);
+      if(!part)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      if(!part->track() || part->track()->type() != Track::WAVE)
+      {
+        done(QJsonObject(), QObject::tr("Only wave parts have a volume and fades."));
+        return;
+      }
+      const bool hasVol = args.value("volume_db").isDouble(), hasIn = args.value("fade_in_seconds").isDouble(),
+                 hasOut = args.value("fade_out_seconds").isDouble();
+      if(!hasVol && !hasIn && !hasOut)
+      {
+        done(QJsonObject(), QObject::tr("Give volume_db, fade_in_seconds or fade_out_seconds."));
+        return;
+      }
+      const int64_t len = part->lenFrame();
+      auto frames = [](double sec) { return int64_t(std::llround(qMax(0.0, sec) * sampleRate())); };
+      const int64_t in = hasIn ? frames(args.value("fade_in_seconds").toDouble()) : part->fadeInFrames();
+      const int64_t out = hasOut ? frames(args.value("fade_out_seconds").toDouble()) : part->fadeOutFrames();
+      if(in + out > len)
+      {
+        done(QJsonObject(), QObject::tr("The fades together (%1 s) are longer than the part (%2 s).")
+               .arg(double(in + out) / sampleRate()).arg(double(len) / sampleRate()));
+        return;
+      }
+      Undo operations;
+      if(hasVol)
+      {
+        const double db = args.value("volume_db").toDouble();
+        // The same limits as the volume handle.
+        const double v = db <= -60.0 ? 0.0 : std::pow(10.0, qMin(db, 12.0) / 20.0);
+        if(v != part->volume())
+          operations.push_back(UndoOp(UndoOp::ModifyPartVolume, part->volume(), v, part));
+      }
+      if(in != int64_t(part->fadeInFrames()))
+        operations.push_back(UndoOp(UndoOp::ModifyPartFadeIn, int(part->fadeInFrames()), int(in), part));
+      if(out != int64_t(part->fadeOutFrames()))
+        operations.push_back(UndoOp(UndoOp::ModifyPartFadeOut, int(part->fadeOutFrames()), int(out), part));
+      if(!operations.empty())
+        MusEGlobal::song->applyOperationGroup(operations);
+      done(partJson(part), QString());
     };
     server.addTool(t);
   }

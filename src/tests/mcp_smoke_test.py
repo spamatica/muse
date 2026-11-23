@@ -121,12 +121,14 @@ READ_TOOLS = {"get_song_info", "get_transport", "list_tracks", "get_track", "lis
               "list_audio_ports", "list_markers", "list_plugins", "list_synths", "list_plugin_presets", "get_midi_notes",
               "get_audio_part", "get_tempo_map", "get_drum_map", "list_midi_ports", "list_patches", "get_export_status"}
 CONTROL_TOOLS = {"set_patch", "transport", "set_position", "set_loop", "set_click", "set_locators", "set_track_mute", "set_track_solo",
-                 "set_track_volume", "set_track_pan", "set_plugin_param", "set_plugin_on", "cancel_export"}
+                 "set_track_volume", "set_track_pan", "set_plugin_param", "set_plugin_on", "cancel_export",
+                 "set_part_mute"}
 RECORD_TOOLS = {"set_track_record_arm", "record"}
 EDIT_TOOLS = {"add_track", "rename_track", "add_midi_part", "add_midi_notes", "move_part", "add_route", "remove_route",
               "undo", "redo", "add_plugin", "add_synth_track", "move_tracks_to_folder", "save_plugin_preset",
               "load_plugin_preset", "modify_midi_notes", "delete_midi_notes", "set_tempo", "set_time_signature",
-              "set_tempo_map_enabled", "set_midi_track_output", "add_marker", "modify_marker", "delete_marker"}
+              "set_tempo_map_enabled", "set_midi_track_output", "add_marker", "modify_marker", "delete_marker",
+              "resize_part", "rename_part", "split_part", "glue_parts", "copy_part", "declone_part", "set_wave_part_volume"}
 DANGEROUS_TOOLS = {"delete_track", "delete_part", "remove_plugin", "save_song", "export_mixdown", "export_stems"}
 
 check(READ_TOOLS <= set(tools), "tools/list has all the read tools (%d tools)" % len(tools))
@@ -414,6 +416,93 @@ if has_edit:
             part["startTick"] += 3840
             check(fails("move_part", {"track": midi["name"], "part_start_tick": part["startTick"], "new_start_tick": 0,
                                       "new_track": group_a["name"] if group_a else "x"}), "move_part to another type of track is refused")
+
+            # Part editing, on copies after the part (the part itself is deleted by the Dangerous tier test).
+            def notes_of(start):
+                r = result("get_midi_notes", {"track": midi["name"], "part_start_tick": start})[0]
+                return r["notes"] if r else None
+
+            def parts_of(name):
+                return result("list_parts", {"track": name})[0]["parts"]
+
+            S = part["startTick"]
+            pa = {"track": midi["name"], "part_start_tick": S}
+            n0 = notes_of(S)
+            c = ok("copy_part", dict(pa, new_start_tick=S + 3840))
+            check(c is not None and c["startTick"] == S + 3840 and not c["isClone"] and len(notes_of(S + 3840)) == len(n0),
+                  "copy_part (an independent copy with the notes)")
+            check(fails("copy_part", dict(pa, new_start_tick=S + 3840)), "copy_part where a part starts is refused")
+            check(fails("copy_part", dict(pa, new_start_tick=0, new_track=group_a["name"] if group_a else "x")),
+                  "copy_part to another type of track is refused")
+            C = S + 3840
+            k = ok("copy_part", {"track": midi["name"], "part_start_tick": C, "new_start_tick": C + 3840, "clone": True})
+            check(k is not None and k["isClone"], "copy_part as a clone")
+            K = C + 3840
+            ok("add_midi_notes", {"track": midi["name"], "part_start_tick": K,
+                                  "notes": [{"tick": 10, "pitch": 40, "length_ticks": 10}]})
+            check(len(notes_of(C)) == len(n0) + 1, "a note added to the clone is in the original too")
+            r = ok("declone_part", {"track": midi["name"], "part_start_tick": K})
+            check(r is not None and not r["isClone"], "declone_part")
+            ok("add_midi_notes", {"track": midi["name"], "part_start_tick": K,
+                                  "notes": [{"tick": 20, "pitch": 41, "length_ticks": 10}]})
+            check(len(notes_of(C)) == len(n0) + 1 and len(notes_of(K)) == len(n0) + 2,
+                  "after declone_part the parts are independent")
+            check(fails("declone_part", {"track": midi["name"], "part_start_tick": K}), "declone_part of a part without clones is refused")
+
+            r = ok("rename_part", {"track": midi["name"], "part_start_tick": C, "name": "mcpcopy"})
+            check(r is not None and r["name"] == "mcpcopy", "rename_part")
+            if has_control:
+                r = ok("set_part_mute", {"track": midi["name"], "part_start_tick": C, "mute": True})
+                check(r is not None and r["mute"] is True, "set_part_mute")
+                ok("set_part_mute", {"track": midi["name"], "part_start_tick": C, "mute": False})
+                check(not [p for p in parts_of(midi["name"]) if p["startTick"] == C][0]["mute"], "set_part_mute off")
+
+            r = ok("resize_part", {"track": midi["name"], "part_start_tick": C, "new_end_tick": C + 3840})
+            check(r is not None and r["startTick"] == C and r["lengthTicks"] == 3840, "resize_part, the end")
+            first = min(n["tick"] for n in notes_of(C))
+            d = first // 2
+            r = ok("resize_part", {"track": midi["name"], "part_start_tick": C, "new_start_tick": C + d})
+            check(r is not None and r["startTick"] == C + d and r["lengthTicks"] == 3840 - d, "resize_part, the start")
+            check(min(n["tick"] for n in notes_of(C + d)) == first - d, "the notes stay where they are in the song")
+            C += d
+            check(fails("resize_part", {"track": midi["name"], "part_start_tick": C, "new_end_tick": C}),
+                  "resize_part to no length is refused")
+            check(fails("resize_part", {"track": midi["name"], "part_start_tick": C, "new_start_tick": K}),
+                  "resize_part onto the start of another part is refused")
+            check(fails("resize_part", {"track": midi["name"], "part_start_tick": C}), "resize_part needs an edge")
+
+            cut = C + 100   # Between the notes.
+            r = ok("split_part", {"track": midi["name"], "part_start_tick": C, "at_tick": cut})
+            check(r is not None and [p["startTick"] for p in r["parts"]] == [C, cut], "split_part")
+            check(fails("split_part", {"track": midi["name"], "part_start_tick": C, "at_tick": C}),
+                  "split_part at the start is refused")
+            r = ok("glue_parts", {"track": midi["name"], "part_start_ticks": [C, cut]})
+            check(r is not None and r["startTick"] == C and r["lengthTicks"] == 3840 - d and len(notes_of(C)) == len(n0) + 1,
+                  "glue_parts")
+            check(fails("glue_parts", {"track": midi["name"], "part_start_ticks": [C]}), "glue_parts needs two parts")
+            check(fails("set_wave_part_volume", {"track": midi["name"], "part_start_tick": C, "volume_db": -3}),
+                  "set_wave_part_volume of a midi part is refused")
+
+    # Wave part volume and fades, on a copy of a wave part on a scratch wave track.
+    wsrc = [p for p in (result("list_parts")[0] or {"parts": []})["parts"] if p.get("type") == "wave"]
+    if wsrc:
+        wt = new_track("wave", "wave")
+        w = ok("copy_part", {"track": wsrc[0]["track"], "part_start_tick": wsrc[0]["startTick"], "new_start_tick": 0,
+                             "new_track": wt["name"]}) if wt else None
+        check(w is not None and w["type"] == "wave", "copy_part of a wave part to another wave track")
+        if w:
+            wargs = {"track": wt["name"], "part_start_tick": 0}
+            r = ok("set_wave_part_volume", dict(wargs, volume_db=-6, fade_in_seconds=0.1, fade_out_seconds=0.2))
+            check(r is not None and abs(r["volumeDb"] + 6) < 0.05 and abs(r["fadeInSeconds"] - 0.1) < 0.001 and
+                  abs(r["fadeOutSeconds"] - 0.2) < 0.001, "set_wave_part_volume")
+            check(fails("set_wave_part_volume", dict(wargs, fade_in_seconds=w["lengthSeconds"])),
+                  "fades longer than the part are refused")
+            r = ok("set_wave_part_volume", dict(wargs, volume_db=-100))
+            check(r is not None and r["volume"] == 0, "-60 dB or less is silence")
+            ok("undo")
+            ok("undo")
+            r = [p for p in parts_of(wt["name"]) if p["startTick"] == 0][0]
+            check(abs(r["volume"] - w["volume"]) < 1e-6 and r["fadeInFrames"] == w["fadeInFrames"], "undo puts the volume and fades back")
 
     # Routes.
     if group_a and group_b:
