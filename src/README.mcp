@@ -29,7 +29,7 @@ Code:
   AGENTS.md                           short description for coding agents
 
 
-The tools (83)
+The tools (90)
 --------------
 
 Read (always on):
@@ -40,7 +40,7 @@ Read (always on):
 Control (reversible, not undoable, applied like the mixer strips do):
   transport, set_position, set_loop, set_click, set_locators, set_track_mute, set_track_solo,
   set_track_volume, set_track_pan, set_plugin_param, set_plugin_on, set_patch, cancel_export,
-  set_part_mute (not undoable, like the arranger's mute tool),
+  set_part_mute and set_part_color (not undoable, like in the arranger),
   mixer strips: set_aux_send, set_track_gain, set_track_prefader, set_track_off, set_track_monitor,
   set_track_channels, set_automation_type, set_midi_controller (volume, pan, reverb, chorus,
   variation or any CC of a midi track's port and channel), set_midi_track_properties (transpose,
@@ -52,7 +52,8 @@ Record:
 Edit (undoable unless the GUI's own action is not):
   add_track, rename_track, add_synth_track, move_tracks_to_folder, add_midi_part, move_part,
   resize_part, rename_part, split_part, glue_parts, copy_part (copy or clone), declone_part,
-  set_wave_part_volume (volume and fades),
+  set_wave_part_volume (volume and fades), shrink_parts, expand_parts, purge_hidden_events,
+  global_split,
   add_midi_notes, modify_midi_notes, delete_midi_notes, add_plugin, save_plugin_preset,
   load_plugin_preset, move_plugin (also to another track), add_route, remove_route (not undoable, like in the GUI), set_tempo,
   set_time_signature, set_tempo_map_enabled (not undoable), set_midi_track_output (not undoable),
@@ -60,7 +61,9 @@ Edit (undoable unless the GUI's own action is not):
 
 Dangerous:
   delete_track, delete_part, remove_plugin, save_song, export_mixdown, export_stems,
-  save_mixer_config, load_mixer_config (with dry_run and the import report)
+  save_mixer_config, load_mixer_config (with dry_run and the import report),
+  global_cut, global_insert (between the locators; they also move the tempo, signature, key and
+  markers, and are two undo steps, as in the GUI)
 
 Files (exports, mixer configurations) are only written and read inside the project folder of a
 saved song (links can not lead out), and replaced only with overwrite: true. Exports run one at a
@@ -99,7 +102,7 @@ The Edit tier makes scratch tracks (mcptest<pid>-...), the Dangerous tier delete
 the export tests in a scratch folder in the project folder, which it removes. It never records and
 never saves the song.
 
-A run headless, that passes completely (302 checks on 2026-11-23): use the stems test project, give
+A run headless, that passes completely (321 checks on 2026-11-23): use the stems test project, give
 MusE a home of its own (without that it may quit while loading the song), and an installed copy of
 the build through APPDIR: MusE starts the plugin scanner by its installed path, and without plugins
 the plugin tests are skipped (list_plugins finds nothing). The LADSPA example plugins (ladspa-sdk)
@@ -156,11 +159,6 @@ Partly:      readable, or some of it possible
                                                                ModifyAudioCtrlVal(List)
  4  Clear automation, take snapshot        Missing  edit       MusE::clearAutomation(),
                                                                takeAutomationSnapshot()
-    PARTS (arranger)
-13  Part color                             Missing  edit       (cosmetic)
-14  Shrink / expand parts to events,       Missing  edit       functions.cpp shrink_parts(),
-    purge hidden events                                        expand_parts(), clean_parts()
-15  Global cut / insert / split            Missing  dangerous  arrangerview "Global ..." actions
     MIDI
 16  Quantize                               Missing  edit       functions.cpp quantize_notes()
 17  Transpose                              Missing  edit       functions.cpp transpose_notes()
@@ -215,7 +213,6 @@ Suggested order (my view, by what an assistant working in a song needs most):
   3. Midi functions and controllers (16-21)
   4. File import/export (42-44)
   5. Tempo, signature and key map (38-39)
-  6. The rest of the parts (13-15)
 
 
 Done since the review
@@ -236,6 +233,12 @@ Done since the review
 11  Copy, duplicate, clone, de-clone       edit       copy_part, declone_part (no clipboard paste:
                                                       copy_part names the target)
 12  Wave part volume and fades             edit       set_wave_part_volume
+13  Part color                             control    set_part_color (by name or index)
+14  Shrink / expand parts to events,       edit       shrink_parts, expand_parts, purge_hidden_events
+    purge hidden events                               (functions.cpp versions for given parts)
+15  Global cut / insert / split            dangerous  global_cut, global_insert (between the locators);
+                                           edit       global_split (at a tick); all for all tracks or
+                                                      a list (structure.cpp takes a track set now)
     MIDI
 22  Midi track settings: transpose,        control    set_midi_track_properties; the strip's
     velocity, delay, length, compression              controllers: set_midi_controller

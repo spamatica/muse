@@ -154,7 +154,7 @@ void adjustGlobalLists(Undo& operations, unsigned int startPos, int diff)
 //    - cut master track
 //---------------------------------------------------------
 
-void globalCut(bool onlySelectedTracks)
+void globalCut(bool onlySelectedTracks, std::set<Track*>* tracklist)
       {
       unsigned int lpos = MusEGlobal::song->lpos();
       unsigned int rpos = MusEGlobal::song->rpos();
@@ -175,7 +175,8 @@ void globalCut(bool onlySelectedTracks)
       
       for (iTrack it = tracks->begin(); it != tracks->end(); ++it) {
             Track* track = *it;
-            if (track == 0 || (onlySelectedTracks && !track->selected()))
+            if (track == 0 || (!tracklist && onlySelectedTracks && !track->selected()) ||
+                (tracklist && tracklist->find(track) == tracklist->end()))
                   continue;
             PartList* pl = track->parts();
             for (iPart p = pl->begin(); p != pl->end(); ++p) {
@@ -255,13 +256,13 @@ void globalCut(bool onlySelectedTracks)
 //    - insert in master track
 //---------------------------------------------------------
 
-void globalInsert(bool onlySelectedTracks)
+void globalInsert(bool onlySelectedTracks, std::set<Track*>* tracklist)
 {
       Undo operations=movePartsTotheRight(
         MusEGlobal::song->lpos() <= MusEGlobal::song->rpos() ? MusEGlobal::song->lpos() : MusEGlobal::song->rpos(),
         MusEGlobal::song->lpos() <= MusEGlobal::song->rpos() ?
           MusEGlobal::song->rpos() - MusEGlobal::song->lpos() : MusEGlobal::song->lpos() - MusEGlobal::song->rpos(),
-        onlySelectedTracks);
+        tracklist ? false : onlySelectedTracks, tracklist);
       MusEGlobal::song->applyOperationGroup(operations);
 }
 
@@ -380,14 +381,15 @@ void globalSplit(bool onlySelectedTracks)
     MusEGlobal::song->applyOperationGroup(operations);
 }
 
-Undo partSplitter(unsigned int pos, bool onlySelectedTracks)
+Undo partSplitter(unsigned int pos, bool onlySelectedTracks, std::set<Track*>* tracklist)
 {
     Undo operations;
     TrackList* tracks = MusEGlobal::song->tracks();
 
     for (iTrack it = tracks->begin(); it != tracks->end(); ++it) {
         Track* track = *it;
-        if (track == 0 || (onlySelectedTracks && !track->selected()))
+        if (track == 0 || (!tracklist && onlySelectedTracks && !track->selected()) ||
+            (tracklist && tracklist->find(track) == tracklist->end()))
               continue;
 
         PartList* pl = track->parts();

@@ -122,7 +122,7 @@ READ_TOOLS = {"get_song_info", "get_transport", "list_tracks", "get_track", "lis
               "get_audio_part", "get_tempo_map", "get_drum_map", "list_midi_ports", "list_patches", "get_export_status"}
 CONTROL_TOOLS = {"set_patch", "transport", "set_position", "set_loop", "set_click", "set_locators", "set_track_mute", "set_track_solo",
                  "set_track_volume", "set_track_pan", "set_plugin_param", "set_plugin_on", "cancel_export",
-                 "set_part_mute", "set_aux_send", "set_track_gain", "set_track_prefader", "set_track_off",
+                 "set_part_mute", "set_part_color", "set_aux_send", "set_track_gain", "set_track_prefader", "set_track_off",
                  "set_track_monitor", "set_track_channels", "set_automation_type", "set_midi_controller",
                  "set_midi_track_properties"}
 RECORD_TOOLS = {"set_track_record_arm", "record"}
@@ -131,9 +131,10 @@ EDIT_TOOLS = {"add_track", "rename_track", "add_midi_part", "add_midi_notes", "m
               "load_plugin_preset", "modify_midi_notes", "delete_midi_notes", "set_tempo", "set_time_signature",
               "set_tempo_map_enabled", "set_midi_track_output", "add_marker", "modify_marker", "delete_marker",
               "resize_part", "rename_part", "split_part", "glue_parts", "copy_part", "declone_part", "set_wave_part_volume",
-              "move_plugin"}
+              "move_plugin", "shrink_parts", "expand_parts", "purge_hidden_events", "global_split"}
 DANGEROUS_TOOLS = {"delete_track", "delete_part", "remove_plugin", "save_song", "export_mixdown", "export_stems",
-                   "save_mixer_config", "load_mixer_config"}
+                   "save_mixer_config", "load_mixer_config",
+                   "global_cut", "global_insert"}
 
 check(READ_TOOLS <= set(tools), "tools/list has all the read tools (%d tools)" % len(tools))
 check(all(t["inputSchema"]["type"] == "object" for t in tools.values()), "every tool has an object schema")
@@ -484,6 +485,41 @@ if has_edit:
             check(r is not None and r["startTick"] == C and r["lengthTicks"] == 3840 - d and len(notes_of(C)) == len(n0) + 1,
                   "glue_parts")
             check(fails("glue_parts", {"track": midi["name"], "part_start_ticks": [C]}), "glue_parts needs two parts")
+
+            if has_control:
+                r = ok("set_part_color", {"track": midi["name"], "part_start_tick": C, "color": 5})
+                check(r is not None and r["colorIndex"] == 5 and r["colorName"], "set_part_color by index")
+                name2 = r["colorName"] if r else ""
+                r = ok("set_part_color", {"track": midi["name"], "part_start_tick": C, "color": name2.upper()})
+                check(r is not None and r["colorIndex"] == 5, "set_part_color by name")
+                check(fails("set_part_color", {"track": midi["name"], "part_start_tick": C, "color": 99}), "set_part_color 99 is refused")
+                check(fails("set_part_color", {"track": midi["name"], "part_start_tick": C, "color": "no such color"}),
+                      "set_part_color with an unknown name is refused")
+
+            # Shrink, expand, purge. The notes of the part end at:
+            pc = {"track": midi["name"], "part_start_ticks": [C]}
+            last_end = max(n["tick"] + n["length_ticks"] for n in notes_of(C))
+            r = ok("shrink_parts", pc | {"raster_ticks": 0})
+            check(r is not None and r["parts"][0]["lengthTicks"] == last_end, "shrink_parts to the last event")
+            r = ok("resize_part", {"track": midi["name"], "part_start_tick": C, "new_end_tick": C + last_end - 100})
+            n_all = len(notes_of(C))
+            r = ok("expand_parts", pc | {"raster_ticks": 480})
+            check(r is not None and r["parts"][0]["lengthTicks"] >= last_end and r["parts"][0]["lengthTicks"] % 480 == 0,
+                  "expand_parts to the events, rounded to the raster")
+            ok("resize_part", {"track": midi["name"], "part_start_tick": C, "new_end_tick": C + last_end - 100})
+            r = ok("purge_hidden_events", pc)
+            check(r is not None and len(notes_of(C)) <= n_all and
+                  max(n["tick"] + n["length_ticks"] for n in notes_of(C)) <= last_end - 100,
+                  "purge_hidden_events removes or shortens the events past the end")
+            check(fails("shrink_parts", {"track": midi["name"], "part_start_ticks": [C + 1]}), "shrink_parts of a wrong part is refused")
+            check(fails("expand_parts", {"track": midi["name"], "part_start_ticks": []}), "expand_parts needs parts")
+
+            # Global split, only on the scratch track.
+            r = ok("global_split", {"at_tick": C + 50, "tracks": [midi["name"]]})
+            check(r is not None and r["partsSplit"] == 1, "global_split on one track")
+            check(len([p for p in parts_of(midi["name"]) if p["startTick"] in (C, C + 50)]) == 2, "the part is split")
+            ok("glue_parts", {"track": midi["name"], "part_start_ticks": [C, C + 50]})
+            check(fails("global_split", {"tracks": ["no such track"]}), "global_split with a wrong track is refused")
             check(fails("set_wave_part_volume", {"track": midi["name"], "part_start_tick": C, "volume_db": -3}),
                   "set_wave_part_volume of a midi part is refused")
 
@@ -1040,6 +1076,35 @@ if has_danger:
         check(False, "save_mixer_config: %s" % json.dumps(err)[:200])
     shutil.rmtree(exp_root, ignore_errors=True)
     check(not os.path.exists(exp_root), "the export folder is removed")
+
+# --- Global cut and insert (Dangerous), past the end of the song ------------------------------------------------
+if has_danger and has_control and midi and part:
+    # They always move the tempo, signature and key changes and the markers after the range, so they are tried
+    # after all of those (and after the song), with a scratch part there.
+    song = result("get_song_info")[0]
+    tm = result("get_tempo_map")[0]
+    ends = [song["lengthTicks"]] + [m["tick"] for m in result("list_markers")[0]["markers"]] + \
+           [x["tick"] for x in tm["tempos"]] + [x.get("tick", 0) for x in tm["timeSignatures"]]
+    ends += [p["startTick"] + p["lengthTicks"] for p in result("list_parts")[0]["parts"]]
+    G = (int(max(ends)) // 1920 + 4) * 1920
+    tp0 = result("get_transport")[0]
+    gp = ok("copy_part", {"track": midi["name"], "part_start_tick": part["startTick"], "new_start_tick": G + 1920})
+    ok("set_locators", {"left": {"tick": G}, "right": {"tick": G + 960}})
+    r = ok("global_insert", {"tracks": [midi["name"]]})
+    check(r is not None and r["fromTick"] == G and r["toTick"] == G + 960, "global_insert")
+    check(any(p["startTick"] == G + 1920 + 960 for p in result("list_parts", {"track": midi["name"]})[0]["parts"]),
+          "global_insert moves the part after the left locator")
+    r = ok("global_cut", {"tracks": [midi["name"]]})
+    check(r is not None and r["rightLocator"]["tick"] == G, "global_cut (the right locator is set to the left one)")
+    check(any(p["startTick"] == G + 1920 for p in result("list_parts", {"track": midi["name"]})[0]["parts"]),
+          "global_cut moves the part back")
+    check(fails("global_cut", {}), "global_cut without a range is refused")
+    check(fails("global_insert", {"tracks": ["no such track"]}), "global_insert with a wrong track is refused")
+    ok("delete_part", {"track": midi["name"], "part_start_tick": G + 1920})
+    ok("set_locators", {"left": {"tick": tp0["leftLocator"]["tick"]}, "right": {"tick": tp0["rightLocator"]["tick"]}})
+    song2 = result("get_song_info")[0]
+    check(song2["markerCount"] == song["markerCount"] and len(result("get_tempo_map")[0]["tempos"]) == len(tm["tempos"]),
+          "the markers and the tempo map are as they were")
 
 # --- Dangerous tier and clean up ----------------------------------------------------------------------------
 if has_danger:

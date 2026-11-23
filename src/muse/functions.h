@@ -408,10 +408,14 @@ bool tracks_are_selected();
 bool parts_are_selected();
 
 //functions for parts
+// These work on the selected parts, or on the given parts.
 void shrink_parts(int raster=-1); //negative values mean "config.division"
+void shrink_parts(const std::set<const Part*>& parts, int raster=-1);
 void expand_parts(int raster=-1);
+void expand_parts(const std::set<const Part*>& parts, int raster=-1);
 void schedule_resize_all_same_len_clone_parts(const Part* part, unsigned new_len, Undo& operations);
 void clean_parts();
+void clean_parts(const std::set<const Part*>& parts);
 bool merge_with_next_part(const Part* part);
 bool merge_selected_parts();
 bool merge_parts(const std::set<const Part*>& parts);

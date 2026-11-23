@@ -24,6 +24,7 @@
 #include <QMetaObject>
 #include <QPointer>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QTimer>
 
 #include <cmath>
@@ -35,6 +36,7 @@
 #include "audiodev.h"
 #include "event.h"
 #include "functions.h"
+#include "arranger/structure.h"
 #include "gconfig.h"
 #include "globals.h"
 #include "marker/marker.h"
@@ -226,6 +228,10 @@ QJsonObject partJson(const Part* part)
   o["lengthSeconds"] = round4(tickToSeconds(part->tick() + part->lenTick()) - tickToSeconds(part->tick()));
   o["mute"] = part->mute();
   o["selected"] = part->selected();
+  const int ci = part->colorIndex();
+  o["colorIndex"] = ci;
+  if(ci >= 0 && ci < NUM_PARTCOLORS)
+    o["colorName"] = MusEGlobal::config.partColorNames[ci];
   o["isClone"] = part->hasClones();
   if(part->track() && part->track()->type() == Track::WAVE)
   {
@@ -808,6 +814,49 @@ Part* partAt(const Track* t, unsigned tick)
     if(i->second->tick() == tick)
       return i->second;
   return nullptr;
+}
+
+// The parts of args["track"] that start at the ticks of args["part_start_ticks"], at least 'min' of them.
+//  Empty with error set otherwise.
+std::set<const Part*> partsFromArgs(const QJsonObject& args, size_t min, QString& error, Track** trackOut = nullptr)
+{
+  std::set<const Part*> parts;
+  const QString name = args.value("track").toString();
+  Track* tr = MusEGlobal::song->findTrack(name);
+  if(!tr || tr->isFolderTrack() || !(tr->type() == Track::WAVE || tr->isMidiTrack()))
+  {
+    error = QObject::tr("There is no midi, drum or wave track named \"%1\".").arg(name);
+    return parts;
+  }
+  for(const QJsonValue& v : args.value("part_start_ticks").toArray())
+  {
+    Part* p = v.isDouble() ? partAt(tr, unsigned(qMax(0.0, v.toDouble()))) : nullptr;
+    if(!p)
+    {
+      error = QObject::tr("Track \"%1\" has no part starting at tick %2.").arg(name).arg(v.toDouble());
+      return std::set<const Part*>();
+    }
+    parts.insert(p);
+  }
+  if(parts.size() < min)
+  {
+    error = min > 1 ? QObject::tr("Give at least %1 parts.").arg(min) : QObject::tr("Give the parts (part_start_ticks).");
+    return std::set<const Part*>();
+  }
+  if(trackOut)
+    *trackOut = tr;
+  return parts;
+}
+
+QJsonObject partTicksProp(const QString& description)
+{
+  QJsonObject ticks;
+  ticks["type"] = "array";
+  QJsonObject item;
+  item["type"] = "integer";
+  ticks["items"] = item;
+  ticks["description"] = description;
+  return ticks;
 }
 
 // Makes the song long enough for a part that ends at the tick, as the arranger does.
@@ -2705,32 +2754,17 @@ void registerMcpTools(McpServer& server)
              {"track", "part_start_ticks"}),
       McpTierEdit);
     t.handler = [](const QJsonObject& args, McpDone done) {
-      const QString name = args.value("track").toString();
-      Track* tr = MusEGlobal::song->findTrack(name);
-      if(!tr || tr->isFolderTrack() || !(tr->type() == Track::WAVE || tr->isMidiTrack()))
+      QString error;
+      Track* tr = nullptr;
+      const std::set<const Part*> parts = partsFromArgs(args, 2, error, &tr);
+      if(parts.empty())
       {
-        done(QJsonObject(), QObject::tr("There is no midi, drum or wave track named \"%1\".").arg(name));
+        done(QJsonObject(), error);
         return;
       }
-      std::set<const Part*> parts;
       unsigned first = UINT_MAX;
-      for(const QJsonValue& v : args.value("part_start_ticks").toArray())
-      {
-        const unsigned tick = unsigned(qMax(0.0, v.toDouble(-1.0)));
-        Part* p = v.isDouble() ? partAt(tr, tick) : nullptr;
-        if(!p)
-        {
-          done(QJsonObject(), QObject::tr("Track \"%1\" has no part starting at tick %2.").arg(name).arg(v.toDouble()));
-          return;
-        }
-        parts.insert(p);
-        first = qMin(first, tick);
-      }
-      if(parts.size() < 2)
-      {
-        done(QJsonObject(), QObject::tr("Give at least two parts."));
-        return;
-      }
+      for(const Part* p : parts)
+        first = qMin(first, p->tick());
       if(!merge_parts(parts))
       {
         done(QJsonObject(), QObject::tr("The parts were not glued."));
@@ -2884,6 +2918,202 @@ void registerMcpTools(McpServer& server)
       if(!operations.empty())
         MusEGlobal::song->applyOperationGroup(operations);
       done(partJson(part), QString());
+    };
+    server.addTool(t);
+  }
+
+  //---------------------------------------------------------
+  //   set_part_color / shrink_parts / expand_parts / purge_hidden_events / global_split / global_cut / global_insert
+  //---------------------------------------------------------
+  {
+    QJsonArray names;
+    for(int i = 0; i < NUM_PARTCOLORS; ++i)
+      names.push_back(MusEGlobal::config.partColorNames[i]);
+    McpTool t = controlTool("set_part_color",
+      QObject::tr("Sets the color of a part in the arranger, like the part's color menu. The colors have names (set in "
+                  "the appearance settings); the first, Default, uses the track color if that is switched on. Not "
+                  "undoable, like in the GUI."),
+      schema({{"track", prop("string", QObject::tr("Track of the part."))},
+              {"part_start_tick", prop("integer", QObject::tr("Start tick of the part, from list_parts."))},
+              {"color", prop("string", QObject::tr("The name of the color, or its index from 0. The names are: %1.")
+                                         .arg(QJsonDocument(names).toJson(QJsonDocument::Compact).constData()))}},
+             {"track", "part_start_tick", "color"}));
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Part* part = partFromArgs(args, "track", "part_start_tick", error);
+      if(!part)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      const QJsonValue cv = args.value("color");
+      int ci = -1;
+      if(cv.isDouble())
+        ci = cv.toInt(-1);
+      else
+      {
+        bool ok = false;
+        const int n = cv.toString().toInt(&ok);
+        if(ok)
+          ci = n;
+        else
+          for(int i = 0; i < NUM_PARTCOLORS; ++i)
+            if(MusEGlobal::config.partColorNames[i].compare(cv.toString(), Qt::CaseInsensitive) == 0)
+              ci = i;
+      }
+      if(ci < 0 || ci >= NUM_PARTCOLORS)
+      {
+        done(QJsonObject(), QObject::tr("color must be a color name or 0 to %1.").arg(NUM_PARTCOLORS - 1));
+        return;
+      }
+      if(part->colorIndex() != ci)
+      {
+        part->setColorIndex(ci);
+        MusEGlobal::song->update(SC_PART_MODIFIED);
+      }
+      done(partJson(part), QString());
+    };
+    server.addTool(t);
+  }
+  for(int k = 0; k < 3; ++k)
+  {
+    static const char* const names[] = { "shrink_parts", "expand_parts", "purge_hidden_events" };
+    const QString descs[] = {
+      QObject::tr("Shortens parts to their events: each ends after its last event, rounded up to the raster. Parts "
+                  "that are not longer than that are left. Like Shrink Selected Parts to Events Length. Undoable."),
+      QObject::tr("Lengthens parts so that all their events are inside: each ends after its last event, rounded up to "
+                  "the raster. Parts that are long enough are left. Like Expand Selected Parts to Events Length. "
+                  "Undoable."),
+      QObject::tr("Deletes the hidden events of parts: those after the end of the part (of its longest clone), and "
+                  "shortens notes that go past the end. Like Purge Hidden Events from Selected Parts. Undoable.") };
+    QJsonObject props;
+    props["track"] = prop("string", QObject::tr("Midi, drum or wave track of the parts."));
+    props["part_start_ticks"] = partTicksProp(QObject::tr("Start ticks of the parts, from list_parts."));
+    if(k < 2)
+      props["raster_ticks"] = prop("integer", QObject::tr("Round the length up to a multiple of this, and not shorter "
+                                                          "than it. Default: one quarter note (ticksPerQuarterNote in "
+                                                          "get_song_info). 0: no rounding."));
+    McpTool t = controlTool(names[k], descs[k], schema(props, {"track", "part_start_ticks"}), McpTierEdit);
+    t.handler = [k](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = nullptr;
+      const std::set<const Part*> parts = partsFromArgs(args, 1, error, &tr);
+      if(parts.empty())
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      const int raster = args.value("raster_ticks").toInt(-1);
+      std::vector<unsigned> ticks;
+      for(const Part* p : parts)
+        ticks.push_back(p->tick());
+      if(k == 0)
+        shrink_parts(parts, raster);
+      else if(k == 1)
+        expand_parts(parts, raster);
+      else
+        clean_parts(parts);
+      QJsonArray out;
+      unsigned end = 0;
+      for(unsigned tick : ticks)
+        if(Part* p = partAt(tr, tick))
+        {
+          out.push_back(partJson(p));
+          end = qMax(end, p->endTick());
+        }
+      if(k == 1)
+        extendSongTo(end);
+      QJsonObject o;
+      o["parts"] = out;
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("global_split",
+      QObject::tr("Splits every part that crosses a position, on all tracks or the given ones, like Global Split. "
+                  "Undoable."),
+      schema({{"at_tick", prop("integer", QObject::tr("Where to split, in ticks. The cursor if left out."))},
+              {"tracks", trackListProp(QObject::tr("Only these tracks. All if left out."))}}),
+      McpTierEdit);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      std::set<Track*> tracks;
+      for(const QJsonValue& v : args.value("tracks").toArray())
+      {
+        Track* tr = MusEGlobal::song->findTrack(v.toString());
+        if(!tr)
+        {
+          done(QJsonObject(), QObject::tr("There is no track named \"%1\".").arg(v.toString()));
+          return;
+        }
+        tracks.insert(tr);
+      }
+      const unsigned at = args.value("at_tick").isDouble() ? unsigned(qMax(0.0, args.value("at_tick").toDouble()))
+                                                         : MusEGlobal::song->cpos();
+      Undo operations = partSplitter(at, false, tracks.empty() ? nullptr : &tracks);
+      int split = 0;
+      for(const UndoOp& op : operations)
+        if(op.type == UndoOp::DeletePart)
+          ++split;
+      if(!operations.empty())
+        MusEGlobal::song->applyOperationGroup(operations);
+      QJsonObject o;
+      o["atTick"] = double(at);
+      o["partsSplit"] = split;
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  for(int k = 0; k < 2; ++k)
+  {
+    const bool cut = k == 0;
+    McpTool t = controlTool(cut ? "global_cut" : "global_insert",
+      cut ? QObject::tr("Removes the time between the left and right locators from the song, like Global Cut: parts "
+                        "(and their audio automation) in the range are deleted or cut, everything after moves left, "
+                        "and so do the tempo, signature and key changes and the markers (markers in the range are "
+                        "deleted). The right locator is then set to the left one. Set the range with set_locators "
+                        "first. With tracks only the parts of those tracks; the tempo, signature, key and markers are "
+                        "always moved. Undoable, in two undo steps (the tempo/signature/key/markers, and the parts).")
+          : QObject::tr("Inserts empty time at the left locator, as long as the range between the left and right "
+                        "locators, like Global Insert: parts that cross the left locator are split, everything after "
+                        "it moves right, and so do the tempo, signature and key changes, the markers and the audio "
+                        "automation. Set the range with set_locators first. With tracks only the parts of those "
+                        "tracks; the tempo, signature, key and markers are always moved. Undoable, in two undo steps."),
+      schema({{"tracks", trackListProp(QObject::tr("Only the parts of these tracks. All if left out."))}}),
+      McpTierDangerous);
+    t.handler = [cut](const QJsonObject& args, McpDone done) {
+      std::set<Track*> tracks;
+      for(const QJsonValue& v : args.value("tracks").toArray())
+      {
+        Track* tr = MusEGlobal::song->findTrack(v.toString());
+        if(!tr)
+        {
+          done(QJsonObject(), QObject::tr("There is no track named \"%1\".").arg(v.toString()));
+          return;
+        }
+        tracks.insert(tr);
+      }
+      Song* s = MusEGlobal::song;
+      if(s->lpos() >= s->rpos())
+      {
+        done(QJsonObject(), QObject::tr("Set the left and right locators around the range first (set_locators)."));
+        return;
+      }
+      if(MusEGlobal::audio->isPlaying())
+      {
+        done(QJsonObject(), QObject::tr("Stop the transport first."));
+        return;
+      }
+      QJsonObject o;
+      o["fromTick"] = double(s->lpos());
+      o["toTick"] = double(s->rpos());
+      if(cut)
+        globalCut(false, tracks.empty() ? nullptr : &tracks);
+      else
+        globalInsert(false, tracks.empty() ? nullptr : &tracks);
+      o["leftLocator"] = positionJson(s->lpos());
+      o["rightLocator"] = positionJson(s->rpos());
+      done(o, QString());
     };
     server.addTool(t);
   }

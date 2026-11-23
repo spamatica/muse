@@ -1501,29 +1501,31 @@ bool parts_are_selected()
 
 void shrink_parts(int raster)
 {
+	shrink_parts(get_all_selected_parts(), raster);
+}
+
+void shrink_parts(const set<const Part*>& parts, int raster)
+{
 	Undo operations;
 	
 	unsigned min_len;
 	if (raster<0) raster=MusEGlobal::config.division;
 	if (raster>=0) min_len=raster; else min_len=MusEGlobal::config.division;
 	
-	TrackList* tracks = MusEGlobal::song->tracks();
-	for (iTrack track = tracks->begin(); track != tracks->end(); track++)
-		for (iPart part = (*track)->parts()->begin(); part != (*track)->parts()->end(); part++)
-			if (part->second->selected())
-			{
-				unsigned len=0;
-				
-				for (ciEvent ev=part->second->events().begin(); ev!=part->second->events().end(); ev++)
-					if (ev->second.endTick() > len)
-						len=ev->second.endTick();
-				
-				if (raster) len=ceil((float)len/raster)*raster;
-				if (len<min_len) len=min_len;
-				
-				if (len < part->second->lenTick())
-					operations.push_back(UndoOp(UndoOp::ModifyPartLength, part->second, part->second->lenValue(), len, 0, Pos::TICKS));
-			}
+	for (set<const Part*>::const_iterator part = parts.begin(); part != parts.end(); part++)
+	{
+		unsigned len=0;
+		
+		for (ciEvent ev=(*part)->events().begin(); ev!=(*part)->events().end(); ev++)
+			if (ev->second.endTick() > len)
+				len=ev->second.endTick();
+		
+		if (raster) len=ceil((float)len/raster)*raster;
+		if (len<min_len) len=min_len;
+		
+		if (len < (*part)->lenTick())
+			operations.push_back(UndoOp(UndoOp::ModifyPartLength, *part, (*part)->lenValue(), len, 0, Pos::TICKS));
+	}
 	
 	MusEGlobal::song->applyOperationGroup(operations);
 }
@@ -1553,72 +1555,77 @@ void schedule_resize_all_same_len_clone_parts(const Part* part, unsigned new_len
 
 void expand_parts(int raster)
 {
+	expand_parts(get_all_selected_parts(), raster);
+}
+
+void expand_parts(const set<const Part*>& parts, int raster)
+{
 	Undo operations;
 	
 	unsigned min_len;
 	if (raster<0) raster=MusEGlobal::config.division;
 	if (raster>=0) min_len=raster; else min_len=MusEGlobal::config.division;
 
-	TrackList* tracks = MusEGlobal::song->tracks();
-	for (iTrack track = tracks->begin(); track != tracks->end(); track++)
-		for (iPart part = (*track)->parts()->begin(); part != (*track)->parts()->end(); part++)
-			if (part->second->selected())
-			{
-				unsigned len=part->second->lenTick();
-				
-				for (ciEvent ev=part->second->events().begin(); ev!=part->second->events().end(); ev++)
-					if (ev->second.endTick() > len)
-						len=ev->second.endTick();
+	for (set<const Part*>::const_iterator part = parts.begin(); part != parts.end(); part++)
+	{
+		unsigned len=(*part)->lenTick();
+		
+		for (ciEvent ev=(*part)->events().begin(); ev!=(*part)->events().end(); ev++)
+			if (ev->second.endTick() > len)
+				len=ev->second.endTick();
 
-				if (raster) len=ceil((float)len/raster)*raster;
-				if (len<min_len) len=min_len;
-								
-				if (len > part->second->lenTick())
-					operations.push_back(UndoOp(UndoOp::ModifyPartLength, part->second, part->second->lenValue(), len, 0, Pos::TICKS));
-			}
+		if (raster) len=ceil((float)len/raster)*raster;
+		if (len<min_len) len=min_len;
+						
+		if (len > (*part)->lenTick())
+			operations.push_back(UndoOp(UndoOp::ModifyPartLength, *part, (*part)->lenValue(), len, 0, Pos::TICKS));
+	}
 			
 	MusEGlobal::song->applyOperationGroup(operations);
 }
 
 void clean_parts()
 {
+	clean_parts(get_all_selected_parts());
+}
+
+void clean_parts(const set<const Part*>& parts)
+{
 	Undo operations;
 	set<const Part*> already_processed;
 	
-	TrackList* tracks = MusEGlobal::song->tracks();
-	for (iTrack track = tracks->begin(); track != tracks->end(); track++)
-		for (iPart part = (*track)->parts()->begin(); part != (*track)->parts()->end(); part++)
-			if ((part->second->selected()) && (already_processed.find(part->second)==already_processed.end()))
-			{ 
-				// find out the length of the longest clone of this part;
-				// avoid processing eventlist multiple times (because of
-				// multiple clones)
-				unsigned len=0;
-				
-				const Part* part_it=part->second;
-				do
-				{
-					if (part_it->lenTick() > len)
-						len=part_it->lenTick();
-						
-					already_processed.insert(part_it);
-					part_it=part_it->nextClone();
-				} while ((part_it!=part->second) && (part_it!=nullptr));
+	for (set<const Part*>::const_iterator part = parts.begin(); part != parts.end(); part++)
+		if (already_processed.find(*part)==already_processed.end())
+		{ 
+			// find out the length of the longest clone of this part;
+			// avoid processing eventlist multiple times (because of
+			// multiple clones)
+			unsigned len=0;
+			
+			const Part* part_it=*part;
+			do
+			{
+				if (part_it->lenTick() > len)
+					len=part_it->lenTick();
+					
+				already_processed.insert(part_it);
+				part_it=part_it->nextClone();
+			} while ((part_it!=*part) && (part_it!=nullptr));
 
-				
-				// erase all events exceeding the longest clone of this part
-				// (i.e., erase all hidden events) or shorten them
-				for (ciEvent ev=part->second->events().begin(); ev!=part->second->events().end(); ev++)
-					if (ev->second.tick() >= len)
-						operations.push_back(UndoOp(UndoOp::DeleteEvent, ev->second, part->second, true, true));
-					else if (ev->second.endTick() > len)
-					{
-						Event new_event = ev->second.clone();
-						new_event.setLenTick(len - ev->second.tick());
-						
-						operations.push_back(UndoOp(UndoOp::ModifyEvent, new_event, ev->second, part->second, true, true));
-					}
-			}
+			
+			// erase all events exceeding the longest clone of this part
+			// (i.e., erase all hidden events) or shorten them
+			for (ciEvent ev=(*part)->events().begin(); ev!=(*part)->events().end(); ev++)
+				if (ev->second.tick() >= len)
+					operations.push_back(UndoOp(UndoOp::DeleteEvent, ev->second, *part, true, true));
+				else if (ev->second.endTick() > len)
+				{
+					Event new_event = ev->second.clone();
+					new_event.setLenTick(len - ev->second.tick());
+					
+					operations.push_back(UndoOp(UndoOp::ModifyEvent, new_event, ev->second, *part, true, true));
+				}
+		}
 	
 	MusEGlobal::song->applyOperationGroup(operations);
 }

@@ -34,12 +34,14 @@ enum OperationType
 };
 
 Undo movePartsTotheRight(unsigned int startTick, unsigned int moveTick, bool only_selected=false, std::set<Track*>* tracklist=nullptr);
-Undo partSplitter(unsigned int tick, bool onlySelectedTracks=false);
+Undo partSplitter(unsigned int tick, bool onlySelectedTracks=false, std::set<Track*>* tracklist=nullptr);
 void adjustAutomation(Undo &operations, Track *track, unsigned int lpos, unsigned int rpos, OperationType type);
 void adjustGlobalLists(Undo& operations, unsigned int startPos, int diff);
 
-void globalCut(bool onlySelectedTracks=false);
-void globalInsert(bool onlySelectedTracks=false);
+// Between the range markers. With a tracklist only on those tracks (and onlySelectedTracks is not used).
+// The tempo, signature and key lists and the markers are always moved.
+void globalCut(bool onlySelectedTracks=false, std::set<Track*>* tracklist=nullptr);
+void globalInsert(bool onlySelectedTracks=false, std::set<Track*>* tracklist=nullptr);
 void globalSplit(bool onlySelectedTracks=false);
 }
 
