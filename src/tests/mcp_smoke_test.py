@@ -122,7 +122,7 @@ READ_TOOLS = {"get_song_info", "get_transport", "list_tracks", "get_track", "lis
               "get_audio_part", "get_tempo_map", "get_drum_map", "list_midi_ports", "list_patches", "get_export_status"}
 CONTROL_TOOLS = {"set_patch", "transport", "set_position", "set_loop", "set_click", "set_locators", "set_track_mute", "set_track_solo",
                  "set_track_volume", "set_track_pan", "set_plugin_param", "set_plugin_on", "cancel_export",
-                 "set_part_mute", "set_part_color", "set_aux_send", "set_track_gain", "set_track_prefader", "set_track_off",
+                 "set_part_mute", "set_part_color", "select_parts", "select_tracks", "set_aux_send", "set_track_gain", "set_track_prefader", "set_track_off",
                  "set_track_monitor", "set_track_channels", "set_automation_type", "set_midi_controller",
                  "set_midi_track_properties"}
 RECORD_TOOLS = {"set_track_record_arm", "record"}
@@ -777,6 +777,45 @@ if has_control:
         r = ok("set_track_monitor", {"track": midi["name"], "on": not m0["monitorInput"]})
         check(r is not None and r["monitorInput"] == (not m0["monitorInput"]), "set_track_monitor of a midi track")
         ok("set_track_monitor", {"track": midi["name"], "on": m0["monitorInput"]})
+
+        # Selection, put back afterwards.
+        sel_parts0 = [(p["track"], p["startTick"]) for p in result("list_parts")[0]["parts"] if p["selected"]]
+        sel_tracks0 = [t["name"] for t in result("list_tracks")[0]["tracks"] if t["selected"]]
+        ticks = [p["startTick"] for p in result("list_parts", {"track": midi["name"]})[0]["parts"]]
+        if len(ticks) >= 3:
+            # Every other part, starting from the second.
+            want = ticks[1::2]
+            r = ok("select_parts", {"track": midi["name"], "part_start_ticks": want})
+            check(r is not None and sorted(p["startTick"] for p in r["selectedParts"]) == sorted(want) and
+                  all(p["track"] == midi["name"] for p in r["selectedParts"]), "select_parts (every other part from the second)")
+            check(sorted(p["startTick"] for p in result("list_parts", {"track": midi["name"]})[0]["parts"] if p["selected"])
+                  == sorted(want), "list_parts shows the selection")
+            r = ok("select_parts", {"track": midi["name"], "part_start_ticks": [ticks[0]], "mode": "add"})
+            check(r is not None and len(r["selectedParts"]) == len(want) + 1, "select_parts add")
+            r = ok("select_parts", {"track": midi["name"], "part_start_ticks": [want[0]], "mode": "remove"})
+            check(r is not None and len(r["selectedParts"]) == len(want), "select_parts remove")
+            r = ok("select_parts", {})
+            check(r is not None and r["selectedParts"] == [], "select_parts with nothing deselects all")
+            check(fails("select_parts", {"track": midi["name"], "part_start_ticks": [ticks[0] + 1]}), "select_parts of a wrong part is refused")
+            check(fails("select_parts", {"track": midi["name"], "part_start_ticks": [ticks[0]], "mode": "toggle"}),
+                  "select_parts with a wrong mode is refused")
+        for i, (tn, tk) in enumerate(sel_parts0):
+            ok("select_parts", {"track": tn, "part_start_ticks": [tk], "mode": "replace" if i == 0 else "add"})
+        if not sel_parts0:
+            ok("select_parts", {})
+        check(sorted((p["track"], p["startTick"]) for p in result("list_parts")[0]["parts"] if p["selected"]) == sorted(sel_parts0),
+              "the part selection is put back")
+
+        r = ok("select_tracks", {"tracks": [midi["name"]]})
+        check(r is not None and r["selectedTracks"] == [midi["name"]], "select_tracks")
+        if audio:
+            r = ok("select_tracks", {"tracks": [audio[0]["name"]], "mode": "add"})
+            check(r is not None and set(r["selectedTracks"]) == {midi["name"], audio[0]["name"]}, "select_tracks add")
+        r = ok("select_tracks", {"tracks": [midi["name"]], "mode": "remove"})
+        check(r is not None and midi["name"] not in r["selectedTracks"], "select_tracks remove")
+        check(fails("select_tracks", {"tracks": ["no such track"]}), "select_tracks with a wrong track is refused")
+        ok("select_tracks", {"tracks": sel_tracks0})
+        check([t["name"] for t in result("list_tracks")[0]["tracks"] if t["selected"]] == sel_tracks0, "the track selection is put back")
 
     # Transport and position. Not while something is playing: Do not disturb.
     tp = result("get_transport")[0]

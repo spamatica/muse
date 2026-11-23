@@ -3119,6 +3119,121 @@ void registerMcpTools(McpServer& server)
   }
 
   //---------------------------------------------------------
+  //   select_parts / select_tracks
+  //---------------------------------------------------------
+  {
+    QJsonObject mode = prop("string", QObject::tr("replace (the default): exactly these are selected afterwards; add: "
+                                                  "these are selected too; remove: these are deselected."));
+    mode["enum"] = QJsonArray{"replace", "add", "remove"};
+    McpTool t = controlTool("select_parts",
+      QObject::tr("Selects parts in the arranger, as clicking them does, so that the GUI's commands for selected parts "
+                  "(copy, glue, color, opening an editor, ...) work on them. The MCP tools themselves do not need a "
+                  "selection: they name their parts. replace with no track deselects all parts. Undoable only if "
+                  "selections are undoable in MusE's settings."),
+      schema({{"track", prop("string", QObject::tr("Track of the parts."))},
+              {"part_start_ticks", partTicksProp(QObject::tr("Start ticks of the parts, from list_parts."))},
+              {"mode", mode}}));
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      const QString mode = args.value("mode").toString("replace");
+      if(mode != "replace" && mode != "add" && mode != "remove")
+      {
+        done(QJsonObject(), QObject::tr("mode must be replace, add or remove."));
+        return;
+      }
+      std::set<const Part*> parts;
+      if(args.contains("track") || mode != "replace")
+      {
+        QString error;
+        parts = partsFromArgs(args, 1, error);
+        if(parts.empty())
+        {
+          done(QJsonObject(), error);
+          return;
+        }
+      }
+      const bool undoable = MusEGlobal::config.selectionsUndoable;
+      Undo operations;
+      auto select = [&](const Part* p, bool sel) {
+        if(p->selected() != sel)
+          operations.push_back(UndoOp(UndoOp::SelectPart, p, sel, p->selected(), !undoable));
+      };
+      if(mode == "replace")
+      {
+        for(const Track* tr : *MusEGlobal::song->tracks())
+          for(ciPart ip = tr->cparts()->begin(); ip != tr->cparts()->end(); ++ip)
+            select(ip->second, parts.count(ip->second) != 0);
+      }
+      else
+        for(const Part* p : parts)
+          select(p, mode == "add");
+      if(!operations.empty())
+        MusEGlobal::song->applyOperationGroup(operations, undoable ? Song::OperationUndoMode : Song::OperationExecuteUpdate);
+      QJsonArray sel;
+      for(const Track* tr : *MusEGlobal::song->tracks())
+        for(ciPart ip = tr->cparts()->begin(); ip != tr->cparts()->end(); ++ip)
+          if(ip->second->selected())
+            sel.push_back(QJsonObject{{"track", tr->name()}, {"startTick", double(ip->second->tick())}});
+      QJsonObject o;
+      o["selectedParts"] = sel;
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    QJsonObject mode = prop("string", QObject::tr("replace (the default): exactly these are selected afterwards; add: "
+                                                  "these are selected too; remove: these are deselected."));
+    mode["enum"] = QJsonArray{"replace", "add", "remove"};
+    McpTool t = controlTool("select_tracks",
+      QObject::tr("Selects tracks in the arranger's track list, as clicking them does, so that the GUI's commands for "
+                  "selected tracks work on them. The MCP tools themselves do not need a selection. replace with no "
+                  "tracks deselects all tracks. Tracks in a folded folder can not be selected (fold it open first)."),
+      schema({{"tracks", trackListProp(QObject::tr("The tracks."))}, {"mode", mode}}));
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      const QString mode = args.value("mode").toString("replace");
+      if(mode != "replace" && mode != "add" && mode != "remove")
+      {
+        done(QJsonObject(), QObject::tr("mode must be replace, add or remove."));
+        return;
+      }
+      std::vector<Track*> tracks;
+      for(const QJsonValue& v : args.value("tracks").toArray())
+      {
+        Track* tr = MusEGlobal::song->findTrack(v.toString());
+        if(!tr)
+        {
+          done(QJsonObject(), QObject::tr("There is no track named \"%1\".").arg(v.toString()));
+          return;
+        }
+        if(mode != "remove" && !tr->isVisible())
+        {
+          done(QJsonObject(), QObject::tr("\"%1\" is hidden in a folded folder and can not be selected.").arg(tr->name()));
+          return;
+        }
+        tracks.push_back(tr);
+      }
+      if(tracks.empty() && mode != "replace")
+      {
+        done(QJsonObject(), QObject::tr("Give the tracks."));
+        return;
+      }
+      if(mode == "replace")
+        MusEGlobal::song->selectAllTracks(false);
+      for(Track* tr : tracks)
+        if(tr->selected() != (mode != "remove"))
+          tr->setSelected(mode != "remove");
+      MusEGlobal::song->update(SC_TRACK_SELECTION);
+      QJsonArray sel;
+      for(const Track* tr : *MusEGlobal::song->tracks())
+        if(tr->selected())
+          sel.push_back(tr->name());
+      QJsonObject o;
+      o["selectedTracks"] = sel;
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+
+  //---------------------------------------------------------
   //   Mixer strips: set_aux_send, set_track_gain, set_track_prefader, set_track_off, set_track_monitor,
   //   set_track_channels, set_automation_type, set_midi_controller, set_midi_track_properties, move_plugin
   //---------------------------------------------------------

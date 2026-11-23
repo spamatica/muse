@@ -29,7 +29,7 @@ Code:
   AGENTS.md                           short description for coding agents
 
 
-The tools (90)
+The tools (92)
 --------------
 
 Read (always on):
@@ -41,6 +41,8 @@ Control (reversible, not undoable, applied like the mixer strips do):
   transport, set_position, set_loop, set_click, set_locators, set_track_mute, set_track_solo,
   set_track_volume, set_track_pan, set_plugin_param, set_plugin_on, set_patch, cancel_export,
   set_part_mute and set_part_color (not undoable, like in the arranger),
+  select_parts and select_tracks (the GUI's selection, for its commands on selected parts and tracks;
+  the MCP tools name their parts and tracks and do not use it),
   mixer strips: set_aux_send, set_track_gain, set_track_prefader, set_track_off, set_track_monitor,
   set_track_channels, set_automation_type, set_midi_controller (volume, pan, reverb, chorus,
   variation or any CC of a midi track's port and channel), set_midi_track_properties (transpose,
@@ -84,6 +86,8 @@ Rules for adding a tool
 - Helpers in mcptools.cpp: schema()/prop()/trackListProp(), controlTool(name, description, schema,
   tier), trackFromArgs(), positionProps()/tickFromPosition() (tick, seconds, or bar and beat, as in
   set_position), positionJson(), markerFromArgs(), pathInProject(), outputFromArgs().
+- Tools name what they work on (track, part start tick, slot, ...). They do not work on the GUI's
+  selection; select_parts and select_tracks only set it for the user's own GUI commands.
 - The handler must call done() exactly once. It may do so later (measure_levels does), but a long
   job should rather start and answer at once, with a status tool (as the exports do).
 - Descriptions are for the AI client: say what the tool does, what the arguments mean, units,
@@ -102,7 +106,7 @@ The Edit tier makes scratch tracks (mcptest<pid>-...), the Dangerous tier delete
 the export tests in a scratch folder in the project folder, which it removes. It never records and
 never saves the song.
 
-A run headless, that passes completely (321 checks on 2026-11-23): use the stems test project, give
+A run headless, that passes completely (334 checks on 2026-11-23): use the stems test project, give
 MusE a home of its own (without that it may quit while loading the song), and an installed copy of
 the build through APPDIR: MusE starts the plugin scanner by its installed path, and without plugins
 the plugin tests are skipped (list_plugins finds nothing). The LADSPA example plugins (ladspa-sdk)
