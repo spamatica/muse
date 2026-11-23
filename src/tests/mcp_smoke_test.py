@@ -116,13 +116,13 @@ tools = {t["name"]: t for t in body["result"]["tools"]}
 READ_TOOLS = {"get_song_info", "get_transport", "list_tracks", "get_track", "list_parts", "get_levels", "measure_levels",
               "list_audio_ports", "list_markers", "list_plugins", "list_synths", "list_plugin_presets", "get_midi_notes",
               "get_audio_part", "get_tempo_map", "get_drum_map", "list_midi_ports", "list_patches"}
-CONTROL_TOOLS = {"set_patch", "transport", "set_position", "set_loop", "set_click", "set_track_mute", "set_track_solo",
+CONTROL_TOOLS = {"set_patch", "transport", "set_position", "set_loop", "set_click", "set_locators", "set_track_mute", "set_track_solo",
                  "set_track_volume", "set_track_pan", "set_plugin_param", "set_plugin_on"}
 RECORD_TOOLS = {"set_track_record_arm", "record"}
 EDIT_TOOLS = {"add_track", "rename_track", "add_midi_part", "add_midi_notes", "move_part", "add_route", "remove_route",
               "undo", "redo", "add_plugin", "add_synth_track", "move_tracks_to_folder", "save_plugin_preset",
               "load_plugin_preset", "modify_midi_notes", "delete_midi_notes", "set_tempo", "set_time_signature",
-              "set_tempo_map_enabled", "set_midi_track_output"}
+              "set_tempo_map_enabled", "set_midi_track_output", "add_marker", "modify_marker", "delete_marker"}
 DANGEROUS_TOOLS = {"delete_track", "delete_part", "remove_plugin", "save_song"}
 
 check(READ_TOOLS <= set(tools), "tools/list has all the read tools (%d tools)" % len(tools))
@@ -477,6 +477,44 @@ if has_edit:
     tm6 = result("get_tempo_map")[0]
     check(len(tm6["timeSignatures"]) == len(tm0["timeSignatures"]), "undo removes the time signature change")
 
+    # Markers. Every change is undone again, so the song's markers are as they were.
+    def markers():
+        return result("list_markers")[0]["markers"]
+
+    def marker(mid):
+        return next((x for x in markers() if x["id"] == mid), None)
+
+    mk0 = markers()
+    mname = PREFIX + "marker"
+    r = ok("add_marker", {"name": mname, "bar": 3, "beat": 2})
+    check(r is not None and r["name"] == mname and r["bar"] == 3 and r["beat"] == 2 and r["locked"] is False,
+          "add_marker by bar and beat")
+    mid = r["id"] if r else None
+    check(mid is not None and marker(mid) is not None, "list_markers has the marker with its id")
+    check(fails("add_marker", {"name": "x"}), "add_marker needs a position")
+    r = ok("modify_marker", {"id": mid, "newName": mname + "b"})
+    check(r is not None and r["id"] == mid and r["name"] == mname + "b" and r["bar"] == 3, "modify_marker renames")
+    r = ok("modify_marker", {"name": mname + "b", "tick": 7680})
+    check(r is not None and r["id"] == mid and r["tick"] == 7680, "modify_marker by name moves it")
+    r = ok("modify_marker", {"id": mid, "locked": True})
+    check(r is not None and r["locked"] is True and r["tick"] == 7680, "modify_marker locks it to its time")
+    check(fails("modify_marker", {"id": mid}), "modify_marker needs a change")
+    check(fails("modify_marker", {"id": -5, "newName": "x"}), "modify_marker with a wrong id is refused")
+    # Two markers with the same name: by name is refused, by id works.
+    r2 = ok("add_marker", {"name": mname + "b", "seconds": 1.0, "locked": True})
+    check(r2 is not None and r2["locked"] is True and abs(r2["seconds"] - 1.0) < 0.05, "add_marker by seconds, locked")
+    check(fails("delete_marker", {"name": mname + "b"}), "delete_marker of an ambiguous name is refused")
+    r = ok("delete_marker", {"id": mid})
+    check(r is not None and r["deleted"] is True and marker(mid) is None, "delete_marker by id")
+    ok("undo")
+    check(marker(mid) is not None and marker(mid)["tick"] == 7680, "undo brings the marker back")
+    # Undo the rest: the second marker, the lock, the move, the rename and the add (some can be one
+    #  undo step), as far as needed.
+    for _ in range(6):
+        if len(markers()) != len(mk0):
+            ok("undo")
+    check(len(markers()) == len(mk0), "undo removes the added markers")
+
     # Midi ports, patches and track output.
     if midi:
         before = track_info(midi["name"])
@@ -553,6 +591,29 @@ if has_control:
         ok("set_loop", {"on": not loop})
         check(wait_for(lambda: result("get_transport")[0]["loop"] == (not loop)), "set_loop")
         ok("set_loop", {"on": loop})
+
+        # Locators (range markers), put back afterwards.
+        lt0, rt0 = tp["leftLocator"]["tick"], tp["rightLocator"]["tick"]
+        r = ok("set_locators", {"left": {"bar": 2}, "right": {"bar": 4}})
+        check(r is not None and r["leftLocator"]["bar"] == 2 and r["rightLocator"]["bar"] == 4, "set_locators by bar")
+        tp2 = result("get_transport")[0]
+        check(tp2["leftLocator"]["bar"] == 2 and tp2["rightLocator"]["bar"] == 4, "get_transport has the locators")
+        # Both moved past the old right locator: Must not be swapped on the way.
+        r = ok("set_locators", {"left": {"bar": 9}, "right": {"bar": 12}})
+        check(r is not None and r["leftLocator"]["bar"] == 9 and r["rightLocator"]["bar"] == 12,
+              "set_locators past the old right locator")
+        r = ok("set_locators", {"left": {"bar": 6}, "right": {"bar": 5}})
+        check(r is not None and r["leftLocator"]["bar"] == 5 and r["rightLocator"]["bar"] == 6,
+              "set_locators puts left and right in order")
+        r = ok("set_locators", {"right": {"tick": r["rightLocator"]["tick"] + 960}})
+        check(r is not None and r["leftLocator"]["bar"] == 5 and r["rightLocator"]["tick"] > r["leftLocator"]["tick"],
+              "set_locators with only the right one")
+        check(fails("set_locators", {}), "set_locators needs a locator")
+        check(fails("set_locators", {"left": {}}), "set_locators needs a position")
+        ok("set_locators", {"left": {"tick": lt0}, "right": {"tick": rt0}})
+        tp3 = result("get_transport")[0]
+        check(tp3["leftLocator"]["tick"] == lt0 and tp3["rightLocator"]["tick"] == rt0, "the locators are put back")
+
         r = ok("set_click", {"on": True})
         check(r is not None and r["click"] is True, "set_click")
         ok("set_click", {"on": False})

@@ -366,6 +366,86 @@ McpTool controlTool(const char* name, const QString& description, const QJsonObj
   return t;
 }
 
+// The properties of a position: One of tick, seconds, or bar with an optional beat.
+QJsonObject positionProps(const QString& what)
+{
+  QJsonObject p;
+  p["tick"] = prop("integer", QObject::tr("%1 in ticks.").arg(what));
+  p["seconds"] = prop("number", QObject::tr("Or %1 in seconds.").arg(what));
+  p["bar"] = prop("integer", QObject::tr("Or %1 as a bar number, the first bar is 1.").arg(what));
+  p["beat"] = prop("integer", QObject::tr("Beat in the bar, the first beat is 1. 1 if left out."));
+  return p;
+}
+
+bool hasPosition(const QJsonObject& args)
+{
+  return args.contains("tick") || args.contains("seconds") || args.contains("bar");
+}
+
+// The position given by tick, seconds, or bar (and beat) in args. False with error set if there is none.
+bool tickFromPosition(const QJsonObject& args, unsigned& tick, QString& error)
+{
+  if(args.contains("tick"))
+    tick = unsigned(qMax(0, args.value("tick").toInt()));
+  else if(args.contains("seconds"))
+  {
+    const double sec = qMax(0.0, args.value("seconds").toDouble());
+    tick = MusEGlobal::tempomap.frame2tick(unsigned(sec * sampleRate()));
+  }
+  else if(args.contains("bar"))
+    tick = MusEGlobal::sigmap.bar2tick(qMax(1, args.value("bar").toInt()) - 1,
+                                       qMax(1, args.value("beat").toInt(1)) - 1, 0);
+  else
+  {
+    error = QObject::tr("Give tick, seconds or bar.");
+    return false;
+  }
+  return true;
+}
+
+QJsonObject markerJson(const Marker& m)
+{
+  QJsonObject o = positionJson(m.tick());
+  o["id"] = double(m.id());
+  o["name"] = m.name();
+  o["locked"] = m.type() == Pos::FRAMES;
+  return o;
+}
+
+// The marker given by args["id"], or by args["name"] if that is unique. Null with error set if there is none.
+const Marker* markerFromArgs(const QJsonObject& args, QString& error)
+{
+  const MarkerList* ml = MusEGlobal::song->marker();
+  if(args.contains("id"))
+  {
+    const EventID_t id = EventID_t(args.value("id").toDouble(-1));
+    for(ciMarker i = ml->cbegin(); i != ml->cend(); ++i)
+      if(i->second.id() == id)
+        return &i->second;
+    error = QObject::tr("There is no marker with the id %1 (list_markers gives the ids).").arg(double(id));
+    return nullptr;
+  }
+  if(!args.contains("name"))
+  {
+    error = QObject::tr("Give the id or the name of the marker.");
+    return nullptr;
+  }
+  const QString name = args.value("name").toString();
+  const Marker* found = nullptr;
+  int count = 0;
+  for(ciMarker i = ml->cbegin(); i != ml->cend(); ++i)
+    if(i->second.name() == name)
+    {
+      found = &i->second;
+      ++count;
+    }
+  if(count == 0)
+    error = QObject::tr("There is no marker named \"%1\".").arg(name);
+  else if(count > 1)
+    error = QObject::tr("There are %1 markers named \"%2\": Give the id instead (list_markers gives the ids).").arg(count).arg(name);
+  return count == 1 ? found : nullptr;
+}
+
 
 
 const char* pluginTypeName(MusEPlugin::PluginType t)
@@ -926,17 +1006,16 @@ void registerMcpTools(McpServer& server)
   {
     McpTool t;
     t.name = "list_markers";
-    t.description = QObject::tr("The markers of the song (for example the sections) with their positions.");
+    t.description = QObject::tr("The markers of the song (for example the sections) with their positions, ids (to "
+                                "name a marker in modify_marker and delete_marker, valid until MusE is closed) and "
+                                "whether they are locked to time (they stay at their time when the tempo changes). "
+                                "The range markers are the left and right locators, see get_transport.");
     t.inputSchema = schema();
     t.handler = [](const QJsonObject&, McpDone done) {
       QJsonArray arr;
       const MarkerList* ml = MusEGlobal::song->marker();
       for(ciMarker i = ml->cbegin(); i != ml->cend(); ++i)
-      {
-        QJsonObject m = positionJson(i->second.tick());
-        m["name"] = i->second.name();
-        arr.push_back(m);
-      }
+        arr.push_back(markerJson(i->second));
       QJsonObject o;
       o["markers"] = arr;
       done(o, QString());
@@ -1462,19 +1541,10 @@ void registerMcpTools(McpServer& server)
         return;
       }
       unsigned tick;
-      if(args.contains("tick"))
-        tick = unsigned(qMax(0, args.value("tick").toInt()));
-      else if(args.contains("seconds"))
+      QString error;
+      if(!tickFromPosition(args, tick, error))
       {
-        const double sec = qMax(0.0, args.value("seconds").toDouble());
-        tick = MusEGlobal::tempomap.frame2tick(unsigned(sec * sampleRate()));
-      }
-      else if(args.contains("bar"))
-        tick = MusEGlobal::sigmap.bar2tick(qMax(1, args.value("bar").toInt()) - 1,
-                                           qMax(1, args.value("beat").toInt(1)) - 1, 0);
-      else
-      {
-        done(QJsonObject(), QObject::tr("Give tick, seconds or bar."));
+        done(QJsonObject(), error);
         return;
       }
       MusEGlobal::song->setPos(Song::CPOS, Pos(tick, true), true, true, true);
@@ -1506,6 +1576,66 @@ void registerMcpTools(McpServer& server)
       MusEGlobal::song->setClick(args.value("on").toBool());
       QJsonObject o;
       o["click"] = MusEGlobal::song->click();
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+
+  //---------------------------------------------------------
+  //   set_locators
+  //---------------------------------------------------------
+  {
+    QJsonObject left, right;
+    left["type"] = "object";
+    left["description"] = QObject::tr("The left locator (start of the range): tick, seconds, or bar and beat.");
+    left["properties"] = positionProps(QObject::tr("The position"));
+    right = left;
+    right["description"] = QObject::tr("The right locator (end of the range): tick, seconds, or bar and beat.");
+    McpTool t = controlTool("set_locators",
+      QObject::tr("Sets the left and/or right locator, the range markers that the loop, recording with punch in/out "
+                  "and the mixdown use. Give left, right or both. If the left one would come after the right one, "
+                  "MusE swaps them. Not undoable, like in the GUI."),
+      schema({{"left", left}, {"right", right}}));
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      const bool hasLeft = args.value("left").isObject(), hasRight = args.value("right").isObject();
+      if(!hasLeft && !hasRight)
+      {
+        done(QJsonObject(), QObject::tr("Give left, right or both."));
+        return;
+      }
+      unsigned l = 0, r = 0;
+      QString error;
+      if((hasLeft && !tickFromPosition(args.value("left").toObject(), l, error)) ||
+         (hasRight && !tickFromPosition(args.value("right").toObject(), r, error)))
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      Song* s = MusEGlobal::song;
+      if(hasLeft && hasRight)
+      {
+        if(l > r)
+          std::swap(l, r);
+        // Song::setPos swaps the locators when the left one passes the right one. Set them in an order
+        //  where that can not happen with the old position of the other one.
+        if(l > s->rpos())
+        {
+          s->setPos(Song::RPOS, Pos(r, true));
+          s->setPos(Song::LPOS, Pos(l, true));
+        }
+        else
+        {
+          s->setPos(Song::LPOS, Pos(l, true));
+          s->setPos(Song::RPOS, Pos(r, true));
+        }
+      }
+      else if(hasLeft)
+        s->setPos(Song::LPOS, Pos(l, true));
+      else
+        s->setPos(Song::RPOS, Pos(r, true));
+      QJsonObject o;
+      o["leftLocator"] = positionJson(s->lpos());
+      o["rightLocator"] = positionJson(s->rpos());
       done(o, QString());
     };
     server.addTool(t);
@@ -2843,6 +2973,114 @@ void registerMcpTools(McpServer& server)
     server.addTool(t);
   }
 
+
+  //---------------------------------------------------------
+  //   add_marker / modify_marker / delete_marker
+  //---------------------------------------------------------
+  {
+    QJsonObject props = positionProps(QObject::tr("The position"));
+    props["name"] = prop("string", QObject::tr("Name of the marker, for example the section (Verse, Chorus)."));
+    props["locked"] = prop("boolean", QObject::tr("true to lock the marker to its time, so it stays there when the "
+                                                  "tempo changes. false (the default) keeps it at its bar and beat."));
+    McpTool t = controlTool("add_marker",
+      QObject::tr("Adds a marker at a position (tick, seconds, or bar and beat). Undoable. Several markers can have "
+                  "the same name and position. For the range markers (left and right locators) see set_locators."),
+      schema(props, {"name"}), McpTierEdit);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      unsigned tick;
+      QString error;
+      if(!tickFromPosition(args, tick, error))
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      Marker m(args.value("name").toString());
+      m.setType(args.value("locked").toBool() ? Pos::FRAMES : Pos::TICKS);
+      m.setTick(tick);
+      MusEGlobal::song->applyOperation(UndoOp(UndoOp::AddMarker, m));
+      const MarkerList* ml = MusEGlobal::song->marker();
+      for(ciMarker i = ml->cbegin(); i != ml->cend(); ++i)
+        if(i->second.id() == m.id())
+        {
+          done(markerJson(i->second), QString());
+          return;
+        }
+      done(QJsonObject(), QObject::tr("The marker was not added."));
+    };
+    server.addTool(t);
+  }
+  {
+    QJsonObject props = positionProps(QObject::tr("The new position"));
+    props["id"] = prop("integer", QObject::tr("Id of the marker, from list_markers."));
+    props["name"] = prop("string", QObject::tr("Or the name of the marker, if no other marker has it."));
+    props["newName"] = prop("string", QObject::tr("The new name."));
+    props["locked"] = prop("boolean", QObject::tr("true to lock the marker to its time, false to keep it at its bar and beat."));
+    McpTool t = controlTool("modify_marker",
+      QObject::tr("Renames and/or moves a marker, or locks it to its time. Give the marker by id or name, and any of "
+                  "newName, a new position (tick, seconds, or bar and beat) and locked. Undoable."),
+      schema(props), McpTierEdit);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      const Marker* old = markerFromArgs(args, error);
+      if(!old)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      const bool move = hasPosition(args);
+      if(!move && !args.contains("newName") && !args.contains("locked"))
+      {
+        done(QJsonObject(), QObject::tr("Give newName, a new position or locked."));
+        return;
+      }
+      unsigned tick = old->tick();
+      if(move && !tickFromPosition(args, tick, error))
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      // A copy keeps the id.
+      Marker m(*old);
+      if(args.contains("newName"))
+        m.setName(args.value("newName").toString());
+      if(move)
+        m.setTick(tick);
+      if(args.contains("locked"))
+        m.setType(args.value("locked").toBool() ? Pos::FRAMES : Pos::TICKS);
+      const EventID_t id = m.id();
+      MusEGlobal::song->applyOperation(UndoOp(UndoOp::ModifyMarker, *old, m));
+      const MarkerList* ml = MusEGlobal::song->marker();
+      for(ciMarker i = ml->cbegin(); i != ml->cend(); ++i)
+        if(i->second.id() == id)
+        {
+          done(markerJson(i->second), QString());
+          return;
+        }
+      done(QJsonObject(), QObject::tr("The marker was not modified."));
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("delete_marker",
+      QObject::tr("Deletes a marker, given by id or name. Undoable."),
+      schema({{"id", prop("integer", QObject::tr("Id of the marker, from list_markers."))},
+              {"name", prop("string", QObject::tr("Or the name of the marker, if no other marker has it."))}}),
+      McpTierEdit);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      const Marker* m = markerFromArgs(args, error);
+      if(!m)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      QJsonObject o = markerJson(*m);
+      MusEGlobal::song->applyOperation(UndoOp(UndoOp::DeleteMarker, *m));
+      o["deleted"] = true;
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
 
   //---------------------------------------------------------
   //   set_midi_track_output
