@@ -1,0 +1,224 @@
+MCP server in MusE: handover
+=============================
+
+Status as of 2026-11-23, branch mcp-server (not merged into master). The server works and is tested;
+what is missing compared to the GUI is listed in "Gaps" at the end, for deciding what comes next.
+
+
+What it is
+----------
+
+A Model Context Protocol server inside MusE, so that an AI client (Claude Code, Claude Desktop, ...)
+can read and change the song. Settings > MCP Server switches it on and shows the address, the token
+and an activity log.
+
+- HTTP on 127.0.0.1 only, one POST endpoint /mcp, JSON-RPC (no SSE, no sessions). A hand-written
+  HTTP/1.1 layer on QTcpServer, JSON with QJsonDocument; the only new dependency is Qt5 Network.
+- Off by default. Every request needs the bearer token. A foreign Host or Origin header is refused
+  (DNS rebinding).
+- Settings and token are in <config>/MusE/MusE/mcp.conf (mode 0600), not in the global config.
+  A token shorter than 32 characters is replaced by a generated one when MusE starts.
+- The tools are grouped in tiers that the user switches on in the dialog. A tool of a tier that is
+  off is not even listed to the client.
+
+Code:
+  muse/components/mcpserver.{h,cpp}   HTTP, JSON-RPC, tiers, settings, McpTool
+  muse/components/mcptools.cpp        all tools (registerMcpTools())
+  muse/components/mcpdialog.{h,cpp}   settings dialog and activity log
+  tests/mcp_smoke_test.py             test against a running MusE
+  AGENTS.md                           short description for coding agents
+
+
+The tools (63)
+--------------
+
+Read (always on):
+  get_song_info, get_transport, list_tracks, get_track, list_parts, get_levels, measure_levels,
+  list_audio_ports, list_markers, list_plugins, list_synths, list_plugin_presets, get_midi_notes,
+  get_audio_part, get_tempo_map, get_drum_map, list_midi_ports, list_patches, get_export_status
+
+Control (reversible, not undoable, applied like the mixer strips do):
+  transport, set_position, set_loop, set_click, set_locators, set_track_mute, set_track_solo,
+  set_track_volume, set_track_pan, set_plugin_param, set_plugin_on, set_patch, cancel_export
+
+Record:
+  set_track_record_arm, record
+
+Edit (undoable unless the GUI's own action is not):
+  add_track, rename_track, add_synth_track, move_tracks_to_folder, add_midi_part, move_part,
+  add_midi_notes, modify_midi_notes, delete_midi_notes, add_plugin, save_plugin_preset,
+  load_plugin_preset, add_route, remove_route (not undoable, like in the GUI), set_tempo,
+  set_time_signature, set_tempo_map_enabled (not undoable), set_midi_track_output (not undoable),
+  add_marker, modify_marker, delete_marker, undo, redo
+
+Dangerous:
+  delete_track, delete_part, remove_plugin, save_song, export_mixdown, export_stems
+
+Exports write only inside the project folder of a saved song (links can not lead out), replace a
+file only with overwrite: true, and run one at a time: the tool starts the export and answers at
+once, get_export_status follows it, cancel_export stops it.
+
+
+Rules for adding a tool
+-----------------------
+
+- Tools run in the GUI thread. Change the song the way the GUI does: through Undo (applyOperation /
+  applyOperationGroup) for undoable edits, PendingOperationList + msgExecutePendingOperations for the
+  rest. Never touch song containers directly. Look for the GUI action that does the same and use its
+  code path, so the result is identical.
+- Pick the tier by consequence: read = no change; control = reversible and harmless; record = makes
+  files by recording; edit = changes the song (undoable where possible); dangerous = deletes, writes
+  files, or takes over the transport. Mark "not undoable" in the description where the GUI is too.
+- Helpers in mcptools.cpp: schema()/prop()/trackListProp(), controlTool(name, description, schema,
+  tier), trackFromArgs(), positionProps()/tickFromPosition() (tick, seconds, or bar and beat, as in
+  set_position), positionJson(), markerFromArgs(), pathInProject(), outputFromArgs().
+- The handler must call done() exactly once. It may do so later (measure_levels does), but a long
+  job should rather start and answer at once, with a status tool (as the exports do).
+- Descriptions are for the AI client: say what the tool does, what the arguments mean, units,
+  ranges, and what is not possible. Errors are plain sentences that say what to do instead.
+- Add the tool to the tier set in tests/mcp_smoke_test.py and test it there; put back whatever the
+  test changes (undo, or restore the value).
+
+
+Testing
+-------
+
+  tests/mcp_smoke_test.py PORT TOKEN
+
+against a running MusE with the server on. Tiers that are off are only checked for not being listed.
+The Edit tier makes scratch tracks (mcptest<pid>-...), the Dangerous tier deletes them again and does
+the export tests in a scratch folder in the project folder, which it removes. It never records and
+never saves the song.
+
+A run headless, that passes completely (195 checks on 2026-11-23): use the stems test project and
+give MusE a home of its own (without that it may quit while loading the song):
+
+  WORK=/some/scratch/folder
+  STEMTEST_WORK=$WORK tests/stem_export/run.sh build/muse/muse4     # makes $WORK/project and $WORK/home
+  CFG=$WORK/home/.config/MusE/MusE
+  printf '[General]\nenabled=true\nport=18765\ntiers=31\ntoken=%s\n' \
+         $(python3 -c 'import secrets;print(secrets.token_hex(32))') > $CFG/mcp.conf; chmod 600 $CFG/mcp.conf
+  HOME=$WORK/home XDG_CONFIG_HOME=$WORK/home/.config XDG_CACHE_HOME=$WORK/home/.cache \
+  XDG_DATA_HOME=$WORK/home/.local/share QT_QPA_PLATFORM=offscreen \
+  LD_LIBRARY_PATH=<the build's folders with .so files> \
+    build/muse/muse4 -b dummy -p -N -I -2 $WORK/project/stemtest.med &
+  tests/mcp_smoke_test.py 18765 $(sed -n 's/^token=//p' $CFG/mcp.conf)
+
+With the default (empty) template instead, get_song_info and list_tracks fail for lack of tracks,
+and with -a the transport did not run, so the transport, volume and pan checks failed; the code
+before the marker work failed the same checks there.
+
+
+Known limitations and open points
+---------------------------------
+
+- A range downmix is a little longer than the range: the bounce records whole audio cycles
+  (176640 frames for 176400 with 256-frame cycles). The GUI downmix does the same. Stems are exact.
+- Cancelling in the middle of a rendering stem/mixdown was not caught in a test (freewheel renders
+  the test sections in milliseconds); cancelling before the first job was. It runs the same code as
+  the progress dialog's Cancel button.
+- MarkerMixdown and StemExport got begin()/report()/cancel()/finished() for the server. The GUI's
+  stems path is covered by tests/stem_export/run.sh; the GUI's "one downmix per marker" path was not
+  run after that change and is worth one manual try.
+- Audio file import is not implemented (see Gaps).
+- Marker ids (list_markers) are valid until MusE is closed.
+
+
+Gaps: GUI functions without an MCP tool
+---------------------------------------
+
+From the menus of the main window, arranger, track list, mixer strips and the editors (piano roll,
+drum editor, wave editor, list editor, master track, marker window). Fill in the priority column.
+"Reuse" names existing code that a tool could call, so that it behaves like the GUI.
+
+Missing:     not possible through MCP at all
+Partly:      readable, or some of it possible
+
+ #  Area / function                        State    Tier       Reuse                                   Priority
+--  -------------------------------------  -------  ---------  --------------------------------------  --------
+    AUTOMATION
+ 1  Read automation points of a parameter  Missing  read       CtrlList of AudioTrack::controller()
+ 2  Add / move / delete automation points  Missing  edit       UndoOp AddAudioCtrlVal, DeleteAudioCtrlVal,
+                                                               ModifyAudioCtrlVal(List)
+ 3  Automation mode (off/read/write/touch) Missing  control    AudioTrack::setAutomationType()
+ 4  Clear automation, take snapshot        Missing  edit       MusE::clearAutomation(),
+                                                               takeAutomationSnapshot()
+    PARTS (arranger)
+ 5  Change part length                     Missing  edit       UndoOp ModifyPartLength
+ 6  Change part start (left edge)          Missing  edit       UndoOp ModifyPartStart
+ 7  Rename part                            Missing  edit       UndoOp ModifyPartName
+ 8  Mute part                              Missing  control    (part mute, as the part popup menu)
+ 9  Split part at a position               Missing  edit       functions.cpp split_part()
+10  Glue / super glue parts                Missing  edit       functions.cpp merge_parts()
+11  Copy, paste, duplicate, clone, de-clone Missing  edit       arranger copy/paste code (pcanvas.cpp)
+12  Wave part volume and fades             Partly   edit       read in list_parts; set like the
+                                                               part volume/fade handles do
+13  Part color                             Missing  edit       (cosmetic)
+14  Shrink / expand parts to events,       Missing  edit       functions.cpp shrink_parts(),
+    purge hidden events                                        expand_parts(), clean_parts()
+15  Global cut / insert / split            Missing  dangerous  arrangerview "Global ..." actions
+    MIDI
+16  Quantize                               Missing  edit       functions.cpp quantize_notes()
+17  Transpose                              Missing  edit       functions.cpp transpose_notes()
+18  Velocity, crescendo                    Missing  edit       modify_velocity(), crescendo()
+19  Note length, legato, delete overlaps   Missing  edit       set_notelen(), legato(),
+                                                               delete_overlaps()
+20  Controllers (CC), pitch bend,          Missing  read/edit  Song::addEventOperation() with
+    program change events in parts                             controller events
+21  Sysex and meta events (list editor)    Missing  edit       liste/ insert code
+22  Midi track settings: transpose,        Missing  control    MidiTrack transposition, velocity,
+    velocity, delay, length, compression                       delay, len, compression
+23  Convert midi <-> drum track            Missing  edit       track list "Convert ..." actions
+    MIXER / AUDIO TRACKS
+24  Aux send levels                        Partly   control    read in get_track; AudioTrack::setAuxSend()
+25  Gain, prefader                         Missing  control    AudioTrack gain/prefader setters
+26  Track on/off                           Missing  control    PendingOperationItem SetTrackOff
+27  Input monitor                          Missing  control    PendingOperationItem SetTrackRecMonitor
+28  Mono / stereo                          Missing  edit       (mixer strip channel button)
+29  Move / swap plugins between slots      Missing  edit       UndoOp Swap/MoveRackEffectPlugin(s)
+30  Save / load mixer configuration        Missing  dangerous  components/mixerconfig.{h,cpp}
+    TRACKS
+31  Duplicate track                        Missing  edit       Song::duplicateTracks()
+32  Reorder tracks (up/down/top/bottom)    Missing  edit       Song::moveSelectedTracks(),
+                                                               UndoOp ReorderTracks
+33  Freeze / unfreeze track                Missing  dangerous  Song::freezeTrackInteractive()
+                                                               (needs a non-interactive start),
+                                                               Song::unfreezeTrack()
+34  Fold / unfold folder                   Missing  control    (track list fold action)
+35  Track color, comment                   Missing  edit       (cosmetic / notes)
+    SYNTHS
+36  Synth parameters                       Missing  control    synth's SynthIF controls (set_plugin_param
+                                                               only reaches effect slots)
+37  Midi port / soft synth setup           Missing  edit       Midi Ports/Soft Synths dialog code
+    TEMPO / SIGNATURE / KEY
+38  Delete or move tempo / signature       Missing  edit       UndoOp DeleteTempo, DeleteSig
+    changes (only adding is possible)
+39  Key signatures                         Missing  read/edit  UndoOp AddKey, DeleteKey, ModifyKey
+    WAVE EDITING
+40  Normalize, fade in/out, reverse,       Missing  edit       waveedit/wavecanvas.cpp
+    mute selection, wave offset                                (normalizeSelection() etc.)
+41  Render downmix to a wave track         Missing  dangerous  "Render Downmix to Selected Wave Track"
+    FILES
+42  Import audio file                      Missing  dangerous  MusE import audio action
+43  Import midi file / part                Missing  dangerous  MusE::importMidi(), importPart()
+44  Export midi file                       Missing  dangerous  MusE::exportMidi()
+45  New / open song, save as, templates    Missing  dangerous  (would replace the song the client
+                                                               works on; probably leave out)
+46  Project description                    Missing  edit       Edit Project Description dialog
+    TRANSPORT
+47  Punch in / out                         Missing  control    transport punch actions
+48  Panic (all notes off)                  Missing  control    MusE panic action
+49  Metronome settings (beyond on/off)     Missing  control    metronome settings
+50  Rewind on stop                         Missing  control    (a setting)
+
+Left out on purpose: view and application things (follow mode, fullscreen, docks, colors of the
+GUI, opening editor windows, plugin and synth GUIs, global settings, shortcuts, midi sync setup,
+appearance, help).
+
+Suggested order (my view, by what an assistant working in a song needs most):
+  1. Automation (1-4)
+  2. Part editing (5-12)
+  3. Mixer and track completeness (24-27, 31-33)
+  4. Midi functions and controllers (16-22)
+  5. File import/export (42-44)
+  6. Tempo, signature and key map (38-39)
