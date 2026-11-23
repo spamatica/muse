@@ -38,8 +38,11 @@
 
 namespace MusECore {
 
-// Makes a string usable as part of a file name.
-static QString sanitizeFileName(const QString& s)
+//---------------------------------------------------------
+//   sanitizeFileName
+//---------------------------------------------------------
+
+QString sanitizeFileName(const QString& s)
 {
   QString r;
   for(const QChar& c : s.simplified())
@@ -69,11 +72,13 @@ MarkerMixdown::~MarkerMixdown()
 }
 
 //---------------------------------------------------------
+//   markerMixdownSections
 //   buildJobs
 //---------------------------------------------------------
 
-void MarkerMixdown::buildJobs()
+std::vector<MixdownSection> markerMixdownSections()
 {
+  std::vector<MixdownSection> sections;
   struct M { QString name; unsigned frame; };
   std::vector<M> markers;
   for(ciMarker i = MusEGlobal::song->marker()->cbegin(); i != MusEGlobal::song->marker()->cend(); ++i)
@@ -89,8 +94,15 @@ void MarkerMixdown::buildJobs()
     const unsigned end = (i + 1 < markers.size()) ? markers[i + 1].frame : song_end;
     if(end <= start)
       continue; // Nothing to render.
-    _jobs.push_back({markers[i].name, start, end});
+    sections.push_back({markers[i].name, start, end});
   }
+  return sections;
+}
+
+void MarkerMixdown::buildJobs()
+{
+  for(const MixdownSection& s : markerMixdownSections())
+    _jobs.push_back({s.name, s.startFrame, s.endFrame});
 }
 
 //---------------------------------------------------------

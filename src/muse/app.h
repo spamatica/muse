@@ -217,7 +217,7 @@ class MusE : public QMainWindow
 
     // Audio Menu Actions
     QAction *audioSaveMixerConfigAction, *audioLoadMixerConfigAction;
-    QAction *audioBounce2TrackAction, *audioBounce2FileAction, *audioRestartAction;
+    QAction *audioBounce2TrackAction, *audioBounce2FileAction, *audioExportStemsAction, *audioRestartAction;
 
     // Automation Menu Actions
     // REMOVE Tim. automation. Removed.
@@ -439,6 +439,7 @@ public slots:
     void saveAsTemplate();
     void bounceToFile(MusECore::AudioOutput* ao = nullptr);
     void bounceToTrack(MusECore::AudioOutput* ao = nullptr);
+    void exportStems();
     void closeEvent(QCloseEvent*event) override;
     void loadProjectFile(const QString&);
 #ifdef USE_SENDPOSTEDEVENTS_FOR_TOPWIN_CLOSE

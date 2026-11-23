@@ -102,6 +102,31 @@ static QString formatExtension(int format)
             }
       }
 
+//---------------------------------------------------------
+//   fillFormats
+//    Only the formats libsndfile supports are offered.
+//---------------------------------------------------------
+
+void MixdownFileDialog::fillFormats(QComboBox* combo, QList<int>& formats)
+      {
+      combo->clear();
+      formats.clear();
+      combo->addItem(tr("wav, 16 Bit"));
+      formats.append(SF_FORMAT_WAV | SF_FORMAT_PCM_16);
+      combo->addItem(tr("wav, 24 Bit"));
+      formats.append(SF_FORMAT_WAV | SF_FORMAT_PCM_24);
+      combo->addItem(tr("wav, 32 Bit (float)"));
+      formats.append(SF_FORMAT_WAV | SF_FORMAT_FLOAT);
+      if (formatAvailable(SF_FORMAT_OGG | SF_FORMAT_VORBIS)) {
+            combo->addItem(tr("ogg, Vorbis"));
+            formats.append(SF_FORMAT_OGG | SF_FORMAT_VORBIS);
+            }
+      if (formatAvailable(FMT_MPEG_MP3)) {
+            combo->addItem(tr("mp3"));
+            formats.append(FMT_MPEG_MP3);
+            }
+      }
+
 MixdownFileDialog::MixdownFileDialog(QWidget* parent, const QString& suggestedDir, const QString& suggestedName)
    : QDialog(parent), _suggestedDir(suggestedDir), _suggestedName(suggestedName)
       {
@@ -109,23 +134,7 @@ MixdownFileDialog::MixdownFileDialog(QWidget* parent, const QString& suggestedDi
       // Room for four lines of the description, whatever the font size is.
       labelModeInfo->setMinimumHeight(labelModeInfo->fontMetrics().lineSpacing() * 4);
 
-      // Formats, only those libsndfile supports are offered.
-      comboFormat->clear();
-      _formats.clear();
-      comboFormat->addItem(tr("wav, 16 Bit"));
-      _formats.append(SF_FORMAT_WAV | SF_FORMAT_PCM_16);
-      comboFormat->addItem(tr("wav, 24 Bit"));
-      _formats.append(SF_FORMAT_WAV | SF_FORMAT_PCM_24);
-      comboFormat->addItem(tr("wav, 32 Bit (float)"));
-      _formats.append(SF_FORMAT_WAV | SF_FORMAT_FLOAT);
-      if (formatAvailable(SF_FORMAT_OGG | SF_FORMAT_VORBIS)) {
-            comboFormat->addItem(tr("ogg, Vorbis"));
-            _formats.append(SF_FORMAT_OGG | SF_FORMAT_VORBIS);
-            }
-      if (formatAvailable(FMT_MPEG_MP3)) {
-            comboFormat->addItem(tr("mp3"));
-            _formats.append(FMT_MPEG_MP3);
-            }
+      fillFormats(comboFormat, _formats);
       // Restore the last used settings.
       spinQuality->setValue(MusEGlobal::config.mixdownQuality);
       {

@@ -1,0 +1,33 @@
+Stem export test (Audio > Export Stems...)
+==========================================
+
+Runs MusE headless (Qt offscreen platform, dummy audio driver) on a generated
+project, exports stems through the real dialog and checks the files sample by
+sample. Needs g++, pkg-config with Qt5Widgets and python3 (standard library only).
+
+  tests/stem_export/run.sh [path/to/muse]          # default: build/muse/muse4
+  STEMTEST_FREEWHEEL=0 tests/stem_export/run.sh    # render in real time
+
+  # Also midi tracks sharing one synth (the bundled synths must be installed):
+  make -C build install DESTDIR=/tmp/museinst
+  STEMTEST_APPDIR=/tmp/museinst tests/stem_export/run.sh
+
+The project (make_song.py) has two stereo wave tracks of noise, "A" and "B",
+and an aux track that "A" sends to at 0.5. It is exported once with the range
+markers and once with the markers "Intro" and "Verse". check_stems.py then
+requires for every stem:
+
+  - exactly the number of frames of its range or section,
+  - starting exactly at the first frame of it (it reports a shift if not),
+  - A = a.wav * 1.5 (the track plus its aux return), B = b.wav (nothing of A).
+
+It is also exported "through the output track's effects": all tracks go to the
+output, whose fader is at 0.5, so then A = a.wav * 0.75 and B = b.wav * 0.5.
+
+The midi project (miditest.med) has the midi tracks "M1" and "M2" playing the
+same synth (vam) at different times. The stem of M1 must be silent where only M2
+plays and the other way round, the stem of the synth track has both.
+
+autotest_preload.cpp is loaded with LD_PRELOAD and drives the GUI; MusE runs
+with HOME and the XDG folders set to the work folder, so the user's own
+configuration is not used or changed.

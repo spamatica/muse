@@ -65,10 +65,12 @@ uint64_t AudioDevice::systemTimeUS() const {
 
 bool AudioDevice::processTransport(unsigned int frames)
 {
-  const int state_pending = _dummyStatePending;  // Snapshots.
-  const int pos_pending   = _dummyPosPending;    //
-  _dummyStatePending = -1;                       // Reset.
-  _dummyPosPending = -1;                         //
+  // Take the pending command and reset it in one step. Reading and then resetting lost a command
+  //  given in between (for example the start of a bounce, which then waited forever).
+  // The state first: the position belonging to it was set before it.
+  const int state_pending = _dummyStatePending.exchange(-1, std::memory_order_acq_rel);
+  const int pos_pending   = state_pending == -1 ? -1 :
+                            (int)_dummyPosPending.exchange((unsigned int)-1, std::memory_order_acq_rel);
   
   if(!MusEGlobal::audio->isRunning())
   {
@@ -172,26 +174,25 @@ unsigned AudioDevice::transportRelocateOrPlayDelay() const
 
 void AudioDevice::startTransport()
 {
-  _dummyStatePending = Audio::START_PLAY;
+  _dummyStatePending.store(Audio::START_PLAY, std::memory_order_release);
 }
 
 void AudioDevice::stopTransport()
 { 
-  _dummyStatePending = Audio::STOP;
+  _dummyStatePending.store(Audio::STOP, std::memory_order_release);
 }
 
 void AudioDevice::seekTransport(unsigned frame)
 {
-  _dummyPosPending   = frame;
+  // The position first, see processTransport().
+  _dummyPosPending.store(frame, std::memory_order_release);
   // STOP -> STOP means seek in stop mode. PLAY -> START_PLAY means seek in play mode.
-  _dummyStatePending = (_dummyState == Audio::STOP ? Audio::STOP : Audio::START_PLAY);
+  _dummyStatePending.store(_dummyState == Audio::STOP ? Audio::STOP : Audio::START_PLAY, std::memory_order_release);
 }
 
 void AudioDevice::seekTransport(const Pos &p)
 {
-  _dummyPosPending   = p.frame();
-  // STOP -> STOP means seek in stop mode. PLAY -> START_PLAY means seek in play mode.
-  _dummyStatePending = (_dummyState == Audio::STOP ? Audio::STOP : Audio::START_PLAY);
+  AudioDevice::seekTransport(p.frame());
 }
 
 

@@ -61,6 +61,7 @@
 #include "synth.h"
 #include "undo.h"
 #include "operations.h"
+#include "stemcapture.h"
 
 #ifdef _WIN32
 #define pipe(fds) _pipe(fds, 4096, _O_BINARY)
@@ -145,6 +146,7 @@ Audio::Audio()
       _freewheel    = false;
       _bounceState  = BounceOff;
       _freezeEndFrame = 0;
+      _stemCapture  = nullptr;
       _loopFrame    = 0;
       _loopCount    = 0;
       m_Xruns       = 0;
@@ -843,12 +845,15 @@ void Audio::process(unsigned frames)
       //    MusEGlobal::extSyncFlag, MusEGlobal::midiSyncContainer.externalPlayState(), isPlaying());
       
       if (isPlaying()) {
+            StemCapture* stem = _stemCapture.load(std::memory_order_acquire);
             if (!freewheel())
-                  MusEGlobal::audioPrefetch->msgTick(isRecording() || MusEGlobal::song->freezeTrack, true);
+                  MusEGlobal::audioPrefetch->msgTick(isRecording() || MusEGlobal::song->freezeTrack || stem, true);
 
-            if (bounce() && ((MusEGlobal::song->freezeTrack || _bounceEndFrameValid) ?
+            // A stem export stops when the capture has got everything.
+            if ((stem && stem->complete()) ||
+                (bounce() && ((MusEGlobal::song->freezeTrack || _bounceEndFrameValid) ?
                              _pos.frame() >= _freezeEndFrame :
-                             _pos >= MusEGlobal::song->rPos())) {
+                             _pos >= MusEGlobal::song->rPos()))) {
                   // Need to let the resulting stopRolling take care of resetting bounce.
                   //_bounceState = BounceOff;
                   // This is safe in both Jack 1 and 2.
@@ -940,6 +945,20 @@ void Audio::process(unsigned frames)
           }
 
       process1(samplePos, offset, frames);
+
+      // Stem export: All tracks have been processed, take the output of the stem's tracks.
+      if (StemCapture* stem = _stemCapture.load(std::memory_order_acquire))
+      {
+            stem->process(samplePos, frames, isPlaying());
+            // Offline, write directly (as the bounce to file does). Otherwise the prefetch thread writes.
+            // Should it be busy, the data waits in the capture until the next cycle.
+            if (freewheel() && _stemMutex.try_lock())
+            {
+                  stem->write();
+                  _stemMutex.unlock();
+            }
+      }
+
       for (iAudioOutput i = ol->begin(); i != ol->end(); ++i)
       {
             (*i)->processWrite();
@@ -1711,12 +1730,33 @@ void Audio::writeTick()
       AudioTrack* ft = MusEGlobal::song->freezeTrack;
       if(ft)
         ft->freezeWriteTick();
+      {
+        std::lock_guard<std::mutex> lock(_stemMutex);
+        if(StemCapture* stem = _stemCapture.load(std::memory_order_acquire))
+          stem->write();
+      }
       WaveTrackList* tl = MusEGlobal::song->waves();
       for (iWaveTrack t = tl->begin(); t != tl->end(); ++t) {
             WaveTrack* track = *t;
             if (track->recordFlag())
                   track->record();
             }
+      }
+
+//---------------------------------------------------------
+//   setStemCapture
+//    GUI thread.
+//---------------------------------------------------------
+
+void Audio::setStemCapture(StemCapture* sc)
+      {
+      {
+        // Wait for the prefetch thread to finish writing.
+        std::lock_guard<std::mutex> lock(_stemMutex);
+        _stemCapture.store(sc, std::memory_order_release);
+      }
+      // The audio thread may still be in a cycle that uses the old one, wait for it to finish.
+      msgAudioWait();
       }
 
 //---------------------------------------------------------
@@ -1759,9 +1799,9 @@ void Audio::startRolling()
                           }
                     }
               }
-        else if(MusEGlobal::song->freezeTrack && freewheel())
+        else if((MusEGlobal::song->freezeTrack || stemCaptureActive()) && freewheel())
         {
-          // Freezing a track renders the song offline like a bounce, but is not a recording.
+          // Freezing a track (or exporting stems) renders the song offline like a bounce, but is not a recording.
           // The prefetch after the seek has read ahead in the wave files, which are read
           //  directly while freewheeling. Position them at the start, or the track would play too early.
           WaveTrackList* tracks = MusEGlobal::song->waves();
@@ -1870,7 +1910,7 @@ void Audio::abortRolling()
 
       // There may be disk read/write fifo buffers waiting to be emptied. Send one last tick to the disk thread.
       if(!freewheel())
-        MusEGlobal::audioPrefetch->msgTick(recording || MusEGlobal::song->freezeTrack, false); // This does not wait.
+        MusEGlobal::audioPrefetch->msgTick(recording || MusEGlobal::song->freezeTrack || stemCaptureActive(), false); // This does not wait.
       
       WaveTrackList* tracks = MusEGlobal::song->waves();
       for (iWaveTrack i = tracks->begin(); i != tracks->end(); ++i) {
@@ -1930,7 +1970,7 @@ void Audio::stopRolling()
 
       // There may be disk read/write fifo buffers waiting to be emptied. Send one last tick to the disk thread.
       if(!freewheel())
-        MusEGlobal::audioPrefetch->msgTick(recording || MusEGlobal::song->freezeTrack, false); // This does not wait.
+        MusEGlobal::audioPrefetch->msgTick(recording || MusEGlobal::song->freezeTrack || stemCaptureActive(), false); // This does not wait.
       
       WaveTrackList* tracks = MusEGlobal::song->waves();
       for (iWaveTrack i = tracks->begin(); i != tracks->end(); ++i) {

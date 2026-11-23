@@ -79,6 +79,8 @@
 #include "mittranspose.h"
 #include "components/mixdowndialog.h"
 #include "markermixdown.h"
+#include "stemexport.h"
+#include "components/stemexportdialog.h"
 #include "mrconfig.h"
 #include "pianoroll.h"
 #ifdef PYTHON_SUPPORT
@@ -846,6 +848,8 @@ MusE::MusE() : QMainWindow()
       //-------- Audio Actions
       audioBounce2TrackAction = new QAction(*MusEGui::downmixTrackSVGIcon, tr("Render Downmix to Selected Wave Track"), this);
       audioBounce2FileAction = new QAction(*MusEGui::downmixFileSVGIcon, tr("Render Downmix to a File..."), this);
+      audioExportStemsAction = new QAction(*MusEGui::downmixFileSVGIcon, tr("Export Stems..."), this);
+      audioExportStemsAction->setStatusTip(tr("Render the output of each chosen track to a file of its own"));
       audioRestartAction = new QAction(*MusEGui::restartSVGIcon, tr("Restart Audio"), this);
       audioSaveMixerConfigAction = new QAction(tr("Save Mixer Configuration..."), this);
       audioSaveMixerConfigAction->setStatusTip(tr("Save the mixer settings and effect plugins of the audio tracks to a file"));
@@ -957,6 +961,7 @@ MusE::MusE() : QMainWindow()
       //-------- Audio connections
       connect(audioBounce2TrackAction, SIGNAL(triggered()), SLOT(bounceToTrack()));
       connect(audioBounce2FileAction, SIGNAL(triggered()), SLOT(bounceToFile()));
+      connect(audioExportStemsAction, SIGNAL(triggered()), SLOT(exportStems()));
       connect(audioRestartAction, SIGNAL(triggered()), SLOT(seqRestart()));
 
       connect(audioSaveMixerConfigAction, &QAction::triggered, [this]() { MusEGui::saveMixerConfiguration(this); });
@@ -1202,6 +1207,7 @@ MusE::MusE() : QMainWindow()
 
       menu_audio->addAction(audioBounce2TrackAction);
       menu_audio->addAction(audioBounce2FileAction);
+      menu_audio->addAction(audioExportStemsAction);
       menu_audio->addSeparator();
       menu_audio->addAction(audioSaveMixerConfigAction);
       menu_audio->addAction(audioLoadMixerConfigAction);
@@ -4372,6 +4378,25 @@ void MusE::bounceToFile(MusECore::AudioOutput* ao)
 
 
 //---------------------------------------------------------
+//   exportStems
+//---------------------------------------------------------
+
+void MusE::exportStems()
+{
+    if(MusEGlobal::audio->isPlaying() || MusEGlobal::audio->bounce())
+    {
+        QMessageBox::warning(this, tr("Export Stems"), tr("Stop the transport before exporting stems."));
+        return;
+    }
+    const QString projectName = project.completeBaseName().isEmpty() ?
+                                QString("untitled") : project.completeBaseName();
+    MusECore::StemExportSettings settings;
+    if (!MusECore::getStemExportSettings(this, MusEGlobal::museProject, settings))
+        return;
+    MusECore::StemExport::start(settings.output, settings.tracks, settings.throughOutput, projectName);
+}
+
+//---------------------------------------------------------
 //   checkRegionNotNull
 //    return true if (rPos - lPos) <= 0
 //---------------------------------------------------------
@@ -4955,6 +4980,7 @@ void MusE::updateConfiguration()
 
       audioBounce2TrackAction->setShortcut(MusEGui::shortcuts[MusEGui::SHRT_AUDIO_BOUNCE_TO_TRACK].key);
       audioBounce2FileAction->setShortcut(MusEGui::shortcuts[MusEGui::SHRT_AUDIO_BOUNCE_TO_FILE].key);
+      audioExportStemsAction->setShortcut(MusEGui::shortcuts[MusEGui::SHRT_AUDIO_EXPORT_STEMS].key);
       audioRestartAction->setShortcut(MusEGui::shortcuts[MusEGui::SHRT_AUDIO_RESTART].key);
 
 // REMOVE Tim. automation. Removed.
