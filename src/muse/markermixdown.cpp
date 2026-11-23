@@ -58,12 +58,31 @@ QString sanitizeFileName(const QString& s)
 }
 
 //---------------------------------------------------------
+//   exportBlockedReason
+//---------------------------------------------------------
+
+QString exportBlockedReason()
+{
+  if(!MusEGlobal::audioDevice)
+    return QObject::tr("There is no audio device running.");
+  if(MusEGlobal::audio->isPlaying() || MusEGlobal::audio->bounce() || MusEGlobal::song->freezeTrack ||
+     MusEGlobal::song->bounceOutput || MusEGlobal::song->bounceTrack)
+    return QObject::tr("Stop the transport (and wait for a running export or freeze to finish) before exporting.");
+  if(MusEGlobal::song->record())
+    return QObject::tr("Switch off recording before exporting.");
+  if(MusEGlobal::extSyncFlag)
+    return QObject::tr("The transport follows external sync, exports are not possible.");
+  return QString();
+}
+
+//---------------------------------------------------------
 //   MarkerMixdown
 //---------------------------------------------------------
 
 MarkerMixdown::MarkerMixdown(AudioOutput* ao, const MixdownSettings& s, const QString& projectName)
   : QObject(nullptr), _ao(ao), _settings(s), _projectName(projectName),
-    _index(0), _running(false), _cancelled(false), _pd(nullptr), _timer(nullptr)
+    _index(0), _running(false), _cancelled(false), _cancelRequested(false), _finished(false),
+    _pd(nullptr), _timer(nullptr)
 {
 }
 
@@ -101,8 +120,13 @@ std::vector<MixdownSection> markerMixdownSections()
 
 void MarkerMixdown::buildJobs()
 {
-  for(const MixdownSection& s : markerMixdownSections())
-    _jobs.push_back({s.name, s.startFrame, s.endFrame});
+  if(_settings.markerMode)
+  {
+    for(const MixdownSection& s : markerMixdownSections())
+      _jobs.push_back({s.name, s.startFrame, s.endFrame, QString()});
+  }
+  else
+    _jobs.push_back({tr("Range"), MusEGlobal::song->lPos().frame(), MusEGlobal::song->rPos().frame(), _settings.path});
 }
 
 //---------------------------------------------------------
@@ -155,13 +179,83 @@ bool MarkerMixdown::start(AudioOutput* ao, const MixdownSettings& s, const QStri
   mm->_pd->setValue(0);
   mm->_pd->show();
 
+  mm->run();
+  return false;
+}
+
+//---------------------------------------------------------
+//   begin
+//---------------------------------------------------------
+
+MarkerMixdown* MarkerMixdown::begin(AudioOutput* ao, const MixdownSettings& s, const QString& projectName,
+                                    bool overwrite, QString* error)
+{
+  QString e = exportBlockedReason();
+  if(e.isEmpty() && !s.markerMode && MusEGlobal::song->rPos().frame() <= MusEGlobal::song->lPos().frame())
+    e = tr("Set the left and right range markers around the part of the song to mix down.");
+  if(e.isEmpty() && !s.markerMode && !overwrite && QFileInfo::exists(s.path))
+    e = tr("The file %1 exists.").arg(QDir::toNativeSeparators(s.path));
+  if(e.isEmpty() && (ao->off() || ao->mute()))
+    e = tr("The output track \"%1\" is muted or off, the downmix would be silent.").arg(ao->name());
+  MarkerMixdown* mm = nullptr;
+  if(e.isEmpty())
+  {
+    mm = new MarkerMixdown(ao, s, projectName);
+    mm->buildJobs();
+    if(mm->_jobs.empty())
+    {
+      e = tr("No named markers found to mix down. Give the markers where each mixdown should start a name, "
+             "and make sure there is a marker after it, or that it is before the end of the song.");
+      delete mm;
+      mm = nullptr;
+    }
+  }
+  if(!mm)
+  {
+    if(error)
+      *error = e;
+    return nullptr;
+  }
+  mm->run();
+  return mm;
+}
+
+//---------------------------------------------------------
+//   run
+//---------------------------------------------------------
+
+void MarkerMixdown::run()
+{
   // The mixdowns run in the audio thread and are finished from the normal GUI message handling,
   //  so poll instead of using a nested event loop.
-  mm->_timer = new QTimer(mm);
-  connect(mm->_timer, SIGNAL(timeout()), mm, SLOT(poll()));
-  mm->startJob();
-  mm->_timer->start(100);
-  return false;
+  _timer = new QTimer(this);
+  connect(_timer, SIGNAL(timeout()), this, SLOT(poll()));
+  startJob();
+  _timer->start(100);
+}
+
+//---------------------------------------------------------
+//   report
+//---------------------------------------------------------
+
+ExportReport MarkerMixdown::report() const
+{
+  ExportReport r;
+  r.finished = _finished;
+  r.cancelled = _cancelled;
+  r.jobCount = int(_jobs.size());
+  r.job = int(_index);
+  if(_running && _index > 0 && _index <= _jobs.size())
+  {
+    const Job& job = _jobs[_index - 1];
+    r.current = job.name;
+    const unsigned pos = MusEGlobal::audio->pos().frame();
+    const int64_t len = int64_t(job.endFrame) - job.startFrame;
+    const int v = pos > job.startFrame && len > 0 ? int((int64_t(pos) - job.startFrame) * 100 / len) : 0;
+    r.percent = std::min(99, std::max(0, v));
+  }
+  r.created = _created;
+  return r;
 }
 
 //---------------------------------------------------------
@@ -171,11 +265,14 @@ bool MarkerMixdown::start(AudioOutput* ao, const MixdownSettings& s, const QStri
 void MarkerMixdown::startJob()
 {
   const Job& job = _jobs[_index++];
-  const QString path = uniquePath(job.name);
+  const QString path = job.path.isEmpty() ? uniquePath(job.name) : job.path;
   SndFile* sf = _settings.createSndFile(path);
   _created.append(path);
-  _pd->setLabelText(tr("Mixdown %1 of %2: %3").arg(_index).arg(_jobs.size()).arg(job.name));
-  _pd->setValue(0);
+  if(_pd)
+  {
+    _pd->setLabelText(tr("Mixdown %1 of %2: %3").arg(_index).arg(_jobs.size()).arg(job.name));
+    _pd->setValue(0);
+  }
 
   // Switch all wave converters to offline settings mode.
   MusEGlobal::song->setAudioConvertersOfflineOperation(true);
@@ -199,13 +296,16 @@ void MarkerMixdown::startJob()
 
 void MarkerMixdown::poll()
 {
-  if(_pd->wasCanceled() && !_cancelled)
+  if(!_cancelled && (_cancelRequested || (_pd && _pd->wasCanceled())))
   {
     _cancelled = true;
     if(_running && MusEGlobal::audioDevice)
       MusEGlobal::audioDevice->stopTransport();
-    _pd->setCancelButton(nullptr);
-    _pd->setLabelText(tr("Cancelling..."));
+    if(_pd)
+    {
+      _pd->setCancelButton(nullptr);
+      _pd->setLabelText(tr("Cancelling..."));
+    }
   }
 
   if(_running)
@@ -220,14 +320,8 @@ void MarkerMixdown::poll()
     }
     else
     {
-      if(!_cancelled)
-      {
-        const Job& job = _jobs[_index - 1];
-        const unsigned pos = MusEGlobal::audio->pos().frame();
-        const int64_t len = int64_t(job.endFrame) - job.startFrame;
-        int v = pos > job.startFrame && len > 0 ? int((int64_t(pos) - job.startFrame) * 100 / len) : 0;
-        _pd->setValue(std::min(99, std::max(0, v)));
-      }
+      if(!_cancelled && _pd)
+        _pd->setValue(report().percent);
       return;
     }
   }
@@ -247,14 +341,19 @@ void MarkerMixdown::poll()
 void MarkerMixdown::finish()
 {
   _timer->stop();
-  _pd->close();
-  const QString title = tr("Downmix");
-  if(_cancelled)
-    QMessageBox::information(MusEGlobal::muse, title,
-      tr("The downmix was cancelled. The last file may be incomplete."));
-  else
-    QMessageBox::information(MusEGlobal::muse, title,
-      tr("%n file(s) written to %1", nullptr, int(_created.size())).arg(QDir::toNativeSeparators(_settings.path)));
+  _finished = true;
+  if(_pd)
+  {
+    _pd->close();
+    const QString title = tr("Downmix");
+    if(_cancelled)
+      QMessageBox::information(MusEGlobal::muse, title,
+        tr("The downmix was cancelled. The last file may be incomplete."));
+    else
+      QMessageBox::information(MusEGlobal::muse, title,
+        tr("%n file(s) written to %1", nullptr, int(_created.size())).arg(QDir::toNativeSeparators(_settings.path)));
+  }
+  emit finished(report());
   deleteLater();
 }
 

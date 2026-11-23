@@ -11,13 +11,17 @@
 # and the other tiers' tests use them, so enable Edit as well for the most complete (and least intrusive)
 # run. The scratch tracks are deleted at the end if the Dangerous tier is on, otherwise the end says which
 # are left. The test never records, never saves the song, and puts back what it changes on existing tracks.
+# With the Dangerous tier on and a saved song it exports (downmix, stems) into a scratch folder in the
+# project folder, mcptest<pid>-export, and removes that folder again.
 # It briefly starts and stops the transport if the Control tier is on.
 
 import http.client
 import json
 import os
+import shutil
 import sys
 import time
+import wave as wavefile
 
 if len(sys.argv) != 3:
     print(__doc__)
@@ -115,15 +119,15 @@ status, body = rpc("tools/list")
 tools = {t["name"]: t for t in body["result"]["tools"]}
 READ_TOOLS = {"get_song_info", "get_transport", "list_tracks", "get_track", "list_parts", "get_levels", "measure_levels",
               "list_audio_ports", "list_markers", "list_plugins", "list_synths", "list_plugin_presets", "get_midi_notes",
-              "get_audio_part", "get_tempo_map", "get_drum_map", "list_midi_ports", "list_patches"}
+              "get_audio_part", "get_tempo_map", "get_drum_map", "list_midi_ports", "list_patches", "get_export_status"}
 CONTROL_TOOLS = {"set_patch", "transport", "set_position", "set_loop", "set_click", "set_locators", "set_track_mute", "set_track_solo",
-                 "set_track_volume", "set_track_pan", "set_plugin_param", "set_plugin_on"}
+                 "set_track_volume", "set_track_pan", "set_plugin_param", "set_plugin_on", "cancel_export"}
 RECORD_TOOLS = {"set_track_record_arm", "record"}
 EDIT_TOOLS = {"add_track", "rename_track", "add_midi_part", "add_midi_notes", "move_part", "add_route", "remove_route",
               "undo", "redo", "add_plugin", "add_synth_track", "move_tracks_to_folder", "save_plugin_preset",
               "load_plugin_preset", "modify_midi_notes", "delete_midi_notes", "set_tempo", "set_time_signature",
               "set_tempo_map_enabled", "set_midi_track_output", "add_marker", "modify_marker", "delete_marker"}
-DANGEROUS_TOOLS = {"delete_track", "delete_part", "remove_plugin", "save_song"}
+DANGEROUS_TOOLS = {"delete_track", "delete_part", "remove_plugin", "save_song", "export_mixdown", "export_stems"}
 
 check(READ_TOOLS <= set(tools), "tools/list has all the read tools (%d tools)" % len(tools))
 check(all(t["inputSchema"]["type"] == "object" for t in tools.values()), "every tool has an object schema")
@@ -730,6 +734,99 @@ if has_record:
         check(fails("record", {"action": "start"}), "record start with no armed track is refused")
     else:
         print("      tracks are armed (%s), record start is not tried" % ", ".join(armed_before))
+
+# --- Exports (Dangerous) ----------------------------------------------------------------------------------
+def wait_export(timeout=120.0):
+    end = time.time() + timeout
+    st = None
+    while time.time() < end:
+        st, _ = result("get_export_status")
+        if st and not st["running"]:
+            return st
+        time.sleep(0.2)
+    return st
+
+
+def wav_info(path):
+    w = wavefile.open(path)
+    try:
+        return w.getnframes(), w.getnchannels()
+    finally:
+        w.close()
+
+
+if has_danger:
+    song = result("get_song_info")[0] or {}
+    tp = result("get_transport")[0] or {}
+    exp_rel = PREFIX + "export"
+    exp_root = os.path.join(os.path.realpath(song.get("projectDirectory", "")), exp_rel)
+    check(fails("export_mixdown", {"path": "../" + exp_rel + "/x.wav"}), "export_mixdown outside the project is refused")
+    check(fails("export_mixdown", {"path": "/tmp/" + exp_rel + ".wav"}), "export_mixdown to an absolute path outside is refused")
+    check(fails("export_mixdown", {"path": exp_rel + "/x", "format": "nope"}), "export_mixdown with a wrong format is refused")
+    check(fails("export_mixdown", {"path": exp_rel + "/x", "channels": 3}), "export_mixdown with 3 channels is refused")
+    check(fails("export_mixdown", {"path": exp_rel + "/x", "mode": "all"}), "export_mixdown with a wrong mode is refused")
+    check(fails("export_stems", {"tracks": ["no such track"], "path": exp_rel}), "export_stems with a wrong track is refused")
+    outs = [t["name"] for t in tracks if t["type"] == "audio_output"]
+    if outs:
+        check(fails("export_stems", {"tracks": [outs[0]], "path": exp_rel}), "an output track is not exported as a stem")
+    range_frames = tp["rightLocator"]["frame"] - tp["leftLocator"]["frame"] if tp else 0
+    args = {"path": exp_rel + "/mix", "output": outs[0]} if outs else {}
+    first, err = result("export_mixdown", args) if outs else (None, None)
+    if tp.get("playing"):
+        print("      transport is playing, the export tests are skipped")
+    elif first is None and err and "project folder" in json.dumps(err):
+        print("      the song has not been saved, the export tests are skipped")
+    elif range_frames <= 0:
+        print("      the range markers are not set, the export tests are skipped")
+    elif first is not None:
+        check(first["running"] and first["kind"] == "mixdown" and first["path"].endswith("/mix.wav"),
+              "export_mixdown starts (and adds the extension)")
+        st = result("get_export_status")[0]
+        if st and st["running"]:
+            check(fails("export_stems", {"tracks": [t["name"] for t in wave[:1]] or ["x"], "path": exp_rel}),
+                  "a second export is refused while one runs")
+        st = wait_export()
+        check(st is not None and st["finished"] and not st["cancelled"] and len(st["created"]) == 1, "the mixdown finishes")
+        if st and st["created"]:
+            n, ch = wav_info(st["created"][0])
+            # The downmix records whole audio cycles.
+            check(ch == 2 and range_frames <= n < range_frames + 8192,
+                  "the mixdown file has the range (%d frames for %d)" % (n, range_frames))
+        check(fails("export_mixdown", args), "export_mixdown does not replace a file")
+        r = ok("export_mixdown", dict(args, overwrite=True, channels=1))
+        st = wait_export()
+        check(r is not None and st["finished"] and wav_info(st["created"][0])[1] == 1, "export_mixdown with overwrite, mono")
+
+        named = [m for m in result("list_markers")[0]["markers"] if m["name"].strip()]
+        if named:
+            r = ok("export_mixdown", {"mode": "markers", "path": exp_rel + "/markers", "output": outs[0]})
+            st = wait_export()
+            check(r is not None and st["finished"] and 1 <= len(st["created"]) <= len(named),
+                  "export_mixdown, one file per named marker (%d)" % (len(st["created"]) if st else 0))
+
+        if wave:
+            solo0 = [(t["name"], t["solo"]) for t in result("list_tracks")[0]["tracks"]]
+            r = ok("export_stems", {"tracks": [wave[0]["name"]], "path": exp_rel + "/stems"})
+            st = wait_export()
+            check(r is not None and st["finished"] and not st["failed"] and len(st["created"]) == 1, "export_stems")
+            if st and st["created"]:
+                n, ch = wav_info(st["created"][0])
+                check(n == range_frames, "the stem has exactly the range (%d frames for %d)" % (n, range_frames))
+            solo1 = [(t["name"], t["solo"]) for t in result("list_tracks")[0]["tracks"]]
+            check(solo1 == solo0, "the solo states are put back after the stems")
+            check(fails("export_stems", {"tracks": [wave[0]["name"]], "path": exp_rel + "/stems"}),
+                  "export_stems does not replace files")
+            # Cancel. It may have finished already: then there is nothing to cancel.
+            ok("export_stems", {"tracks": [t["name"] for t in wave], "path": exp_rel + "/cancel"})
+            result("cancel_export")
+            st = wait_export()
+            check(st is not None and st["finished"] and (st["cancelled"] or len(st["created"]) == len(wave)),
+                  "cancel_export (cancelled: %s)" % (st["cancelled"] if st else None))
+            check(fails("cancel_export"), "cancel_export without a running export is refused")
+    elif outs:
+        check(False, "export_mixdown: %s" % json.dumps(err)[:200])
+    shutil.rmtree(exp_root, ignore_errors=True)
+    check(not os.path.exists(exp_root), "the export folder is removed")
 
 # --- Dangerous tier and clean up ----------------------------------------------------------------------------
 if has_danger:

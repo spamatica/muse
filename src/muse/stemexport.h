@@ -31,7 +31,7 @@
 #include <QString>
 #include <QStringList>
 
-#include "components/mixdowndialog.h"
+#include "markermixdown.h"
 
 class QProgressDialog;
 class QTimer;
@@ -76,6 +76,8 @@ class StemExport : public QObject {
       bool _playSeen;
       int _waitPolls;
       bool _cancelled;
+      bool _cancelRequested;
+      bool _finished;
       QStringList _created;
       QStringList _failed;
       StemCapture* _capture;
@@ -86,6 +88,12 @@ class StemExport : public QObject {
       ~StemExport();
 
       void buildJobs(const std::vector<Track*>& tracks);
+      // Checks and makes the jobs. nullptr with 'error' (and 'warning' for a warning) set if it can not start.
+      //  'existing' is the number of files that would be overwritten.
+      static StemExport* create(const MixdownSettings& settings, const std::vector<Track*>& tracks,
+                                AudioOutput* output, const QString& projectName,
+                                QString* error, bool* warning, int* existing);
+      void run();
       void applySolo(const Track* soloTrack);
       void restoreSolo();
       bool startJob();
@@ -96,12 +104,23 @@ class StemExport : public QObject {
       void poll();
       void playChanged(bool);
 
+   signals:
+      // Just before it deletes itself.
+      void finished(const MusECore::ExportReport& report);
+
    public:
       // GUI thread. 'settings.path' is the folder. With 'output', each stem is taken from that output track
       //  (through the groups, and the effects and fader of the output) instead of from the track itself.
       // Returns true if nothing was started (a message has been shown).
       static bool start(const MixdownSettings& settings, const std::vector<Track*>& tracks,
                         AudioOutput* output, const QString& projectName);
+      // The same without dialogs or messages. Existing stem files are only replaced if 'overwrite'.
+      // Returns nullptr with 'error' set if nothing was started.
+      static StemExport* begin(const MixdownSettings& settings, const std::vector<Track*>& tracks,
+                               AudioOutput* output, const QString& projectName, bool overwrite, QString* error);
+      // Stops the running stem (its file is removed) and does not start the others.
+      void cancel() { _cancelRequested = true; }
+      ExportReport report() const;
 
       // Whether the track is offered for stem export (folders are only for grouping the list).
       static bool listed(const Track* t);

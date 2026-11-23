@@ -23,6 +23,7 @@
 #ifndef __MIXDOWNDIALOG_H__
 #define __MIXDOWNDIALOG_H__
 
+#include <vector>
 #include <QString>
 #include <QList>
 
@@ -52,6 +53,14 @@ struct MixdownSettings {
       // The caller owns it. Not opened.
       SndFile* createSndFile(const QString& filePath) const;
       };
+
+// A format offered for downmix and stems: A short name (for scripts), the libsndfile format.
+struct MixdownFormat {
+      const char* name;
+      int format;
+      };
+// The formats that libsndfile supports here, wav ones first.
+std::vector<MixdownFormat> availableMixdownFormats();
 
 // Shows the downmix dialog. Returns false if cancelled.
 extern bool getMixdownSettings(QWidget* parent, const QString& suggestedDir,

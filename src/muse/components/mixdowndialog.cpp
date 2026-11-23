@@ -33,7 +33,32 @@
 #include "mixdowndialog.h"
 #include "wave.h"
 
+static const int FMT_MPEG_MP3 = 0x230000 | 0x0082; // SF_FORMAT_MPEG | SF_FORMAT_MPEG_LAYER_III, libsndfile >= 1.1.0
+
+static bool formatAvailable(int format)
+      {
+      SF_INFO info;
+      memset(&info, 0, sizeof(info));
+      info.samplerate = 44100;
+      info.channels   = 2;
+      info.format     = format;
+      return sf_format_check(&info) != 0;
+      }
+
 namespace MusECore {
+
+std::vector<MixdownFormat> availableMixdownFormats()
+      {
+      std::vector<MixdownFormat> l = {
+            { "wav16", SF_FORMAT_WAV | SF_FORMAT_PCM_16 },
+            { "wav24", SF_FORMAT_WAV | SF_FORMAT_PCM_24 },
+            { "wav32float", SF_FORMAT_WAV | SF_FORMAT_FLOAT } };
+      if (formatAvailable(SF_FORMAT_OGG | SF_FORMAT_VORBIS))
+            l.push_back({ "ogg", SF_FORMAT_OGG | SF_FORMAT_VORBIS });
+      if (formatAvailable(FMT_MPEG_MP3))
+            l.push_back({ "mp3", FMT_MPEG_MP3 });
+      return l;
+      }
 
 QString MixdownSettings::extension() const
       {
@@ -75,22 +100,10 @@ namespace MusEGui {
 //   MixdownFileDialog
 //---------------------------------------------------------
 
-static const int FMT_MPEG_MP3 = 0x230000 | 0x0082; // SF_FORMAT_MPEG | SF_FORMAT_MPEG_LAYER_III, libsndfile >= 1.1.0
-
 static const QStringList& audioExtensions()
       {
       static const QStringList l = { "wav", "ogg", "mp3" };
       return l;
-      }
-
-static bool formatAvailable(int format)
-      {
-      SF_INFO info;
-      memset(&info, 0, sizeof(info));
-      info.samplerate = 44100;
-      info.channels   = 2;
-      info.format     = format;
-      return sf_format_check(&info) != 0;
       }
 
 static QString formatExtension(int format)

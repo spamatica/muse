@@ -117,6 +117,7 @@ AudioTrack* StemExport::source(const Track* t, QString* why)
 StemExport::StemExport(const MixdownSettings& s, AudioOutput* output, const QString& projectName)
   : QObject(nullptr), _settings(s), _output(output), _projectName(projectName),
     _index(0), _running(false), _stopSeen(false), _playSeen(false), _waitPolls(0), _cancelled(false),
+    _cancelRequested(false), _finished(false),
     _capture(nullptr), _pd(nullptr), _timer(nullptr)
 {
 }
@@ -179,57 +180,78 @@ void StemExport::buildJobs(const std::vector<Track*>& tracks)
 //   start
 //---------------------------------------------------------
 
-bool StemExport::start(const MixdownSettings& settings, const std::vector<Track*>& tracks,
-                       AudioOutput* output, const QString& projectName)
+StemExport* StemExport::create(const MixdownSettings& settings, const std::vector<Track*>& tracks,
+                               AudioOutput* output, const QString& projectName,
+                               QString* error, bool* warning, int* existing)
 {
-  const QString title = tr("Export Stems");
+  *warning = false;
+  *existing = 0;
   if(!MusEGlobal::audioDevice)
   {
-    QMessageBox::critical(MusEGlobal::muse, title, tr("There is no audio device running."));
-    return true;
+    *error = tr("There is no audio device running.");
+    return nullptr;
   }
+  *warning = true;
   if(MusEGlobal::audio->isPlaying() || MusEGlobal::audio->bounce() || MusEGlobal::song->freezeTrack)
   {
-    QMessageBox::warning(MusEGlobal::muse, title, tr("Stop the transport before exporting stems."));
-    return true;
+    *error = tr("Stop the transport before exporting stems.");
+    return nullptr;
   }
   if(MusEGlobal::song->record())
   {
-    QMessageBox::warning(MusEGlobal::muse, title, tr("Switch off recording before exporting stems."));
-    return true;
+    *error = tr("Switch off recording before exporting stems.");
+    return nullptr;
   }
+  *warning = false;
   if(!settings.markerMode && MusEGlobal::song->rPos().frame() <= MusEGlobal::song->lPos().frame())
   {
-    QMessageBox::critical(MusEGlobal::muse, title,
-      tr("Set the left and right range markers around the part of the song to export."));
-    return true;
+    *error = tr("Set the left and right range markers around the part of the song to export.");
+    return nullptr;
   }
 
   if(output && (output->off() || output->mute()))
   {
-    QMessageBox::warning(MusEGlobal::muse, title,
-      tr("The output track \"%1\" is muted or off, the stems would be silent.").arg(output->name()));
-    return true;
+    *warning = true;
+    *error = tr("The output track \"%1\" is muted or off, the stems would be silent.").arg(output->name());
+    return nullptr;
   }
 
   StemExport* se = new StemExport(settings, output, projectName);
   se->buildJobs(tracks);
   if(se->_jobs.empty())
   {
-    QMessageBox::critical(MusEGlobal::muse, title,
-      settings.markerMode ?
+    *error = settings.markerMode ?
         tr("No named markers found to export.\nGive the markers where each part should start a name, "
            "and make sure there is a marker after it, or that it is before the end of the song.") :
-        tr("No tracks to export."));
+        tr("No tracks to export.");
     delete se;
+    return nullptr;
+  }
+
+  for(const Job& j : se->_jobs)
+    if(QFileInfo::exists(j.path))
+      ++*existing;
+  return se;
+}
+
+bool StemExport::start(const MixdownSettings& settings, const std::vector<Track*>& tracks,
+                       AudioOutput* output, const QString& projectName)
+{
+  const QString title = tr("Export Stems");
+  QString error;
+  bool warning;
+  int existing;
+  StemExport* se = create(settings, tracks, output, projectName, &error, &warning, &existing);
+  if(!se)
+  {
+    if(warning)
+      QMessageBox::warning(MusEGlobal::muse, title, error);
+    else
+      QMessageBox::critical(MusEGlobal::muse, title, error);
     return true;
   }
 
   // A set of stems belongs together, so rather overwrite than number single files.
-  int existing = 0;
-  for(const Job& j : se->_jobs)
-    if(QFileInfo::exists(j.path))
-      ++existing;
   if(existing > 0)
   {
     QMessageBox mb(QMessageBox::Question, title,
@@ -248,10 +270,6 @@ bool StemExport::start(const MixdownSettings& settings, const std::vector<Track*
     }
   }
 
-  for(Track* t : *MusEGlobal::song->tracks())
-    if(!t->isFolderTrack())
-      se->_soloStates.push_back(std::make_pair(t, t->solo()));
-
   se->_pd = new QProgressDialog(QString(), tr("Cancel"), 0, 100, MusEGlobal::muse);
   se->_pd->setWindowTitle(title);
   se->_pd->setAttribute(Qt::WA_DeleteOnClose);
@@ -262,14 +280,82 @@ bool StemExport::start(const MixdownSettings& settings, const std::vector<Track*
   se->_pd->setValue(0);
   se->_pd->show();
 
-  connect(MusEGlobal::song, SIGNAL(playChanged(bool)), se, SLOT(playChanged(bool)));
+  se->run();
+  return false;
+}
+
+//---------------------------------------------------------
+//   begin
+//---------------------------------------------------------
+
+StemExport* StemExport::begin(const MixdownSettings& settings, const std::vector<Track*>& tracks,
+                              AudioOutput* output, const QString& projectName, bool overwrite, QString* error)
+{
+  QString e;
+  bool warning;
+  int existing;
+  StemExport* se = create(settings, tracks, output, projectName, &e, &warning, &existing);
+  if(se && existing > 0 && !overwrite)
+  {
+    e = tr("%n stem file(s) in %1 exist and would be overwritten.", nullptr, existing)
+          .arg(QDir::toNativeSeparators(settings.path));
+    delete se;
+    se = nullptr;
+  }
+  if(!se)
+  {
+    if(error)
+      *error = e;
+    return nullptr;
+  }
+  se->run();
+  return se;
+}
+
+//---------------------------------------------------------
+//   run
+//---------------------------------------------------------
+
+void StemExport::run()
+{
+  for(Track* t : *MusEGlobal::song->tracks())
+    if(!t->isFolderTrack())
+      _soloStates.push_back(std::make_pair(t, t->solo()));
+
+  connect(MusEGlobal::song, SIGNAL(playChanged(bool)), this, SLOT(playChanged(bool)));
 
   // The passes run in the audio thread and are finished from the normal GUI message handling,
   //  so poll instead of using a nested event loop.
-  se->_timer = new QTimer(se);
-  connect(se->_timer, SIGNAL(timeout()), se, SLOT(poll()));
-  se->_timer->start(100);
-  return false;
+  _timer = new QTimer(this);
+  connect(_timer, SIGNAL(timeout()), this, SLOT(poll()));
+  _timer->start(100);
+}
+
+//---------------------------------------------------------
+//   report
+//---------------------------------------------------------
+
+ExportReport StemExport::report() const
+{
+  ExportReport r;
+  r.finished = _finished;
+  r.cancelled = _cancelled;
+  r.jobCount = int(_jobs.size());
+  r.job = int(_index);
+  if(_running && _index > 0 && _index <= _jobs.size())
+  {
+    const Job& job = _jobs[_index - 1];
+    r.current = job.section.isEmpty() ? job.track->name() : job.section + " - " + job.track->name();
+    if(_capture)
+    {
+      const int64_t total = _capture->frames();
+      const int v = total > 0 ? int(_capture->mixedFrames() * 100 / total) : 0;
+      r.percent = std::min(99, std::max(0, v));
+    }
+  }
+  r.created = _created;
+  r.failed = _failed;
+  return r;
 }
 
 //---------------------------------------------------------
@@ -315,8 +401,11 @@ bool StemExport::startJob()
 {
   const Job& job = _jobs[_index++];
   const QString name = job.section.isEmpty() ? job.track->name() : job.section + " - " + job.track->name();
-  _pd->setLabelText(tr("Stem %1 of %2: %3").arg(_index).arg(_jobs.size()).arg(name));
-  _pd->setValue(0);
+  if(_pd)
+  {
+    _pd->setLabelText(tr("Stem %1 of %2: %3").arg(_index).arg(_jobs.size()).arg(name));
+    _pd->setValue(0);
+  }
 
   AudioTrack* src = source(job.track);
   if(!src)
@@ -420,13 +509,16 @@ void StemExport::playChanged(bool playing)
 
 void StemExport::poll()
 {
-  if(_pd->wasCanceled() && !_cancelled)
+  if(!_cancelled && (_cancelRequested || (_pd && _pd->wasCanceled())))
   {
     _cancelled = true;
     if(_running && MusEGlobal::audioDevice)
       MusEGlobal::audioDevice->stopTransport();
-    _pd->setCancelButton(nullptr);
-    _pd->setLabelText(tr("Cancelling..."));
+    if(_pd)
+    {
+      _pd->setCancelButton(nullptr);
+      _pd->setLabelText(tr("Cancelling..."));
+    }
   }
 
   if(_running)
@@ -439,12 +531,8 @@ void StemExport::poll()
       _stopSeen = true;
     if(!(_stopSeen && stopped))
     {
-      if(!_cancelled)
-      {
-        const int64_t total = _capture->frames();
-        const int v = total > 0 ? int(_capture->mixedFrames() * 100 / total) : 0;
-        _pd->setValue(std::min(99, std::max(0, v)));
-      }
+      if(!_cancelled && _pd)
+        _pd->setValue(report().percent);
       return;
     }
     finishJob();
@@ -468,20 +556,25 @@ void StemExport::finish()
   _timer->stop();
   disconnect(MusEGlobal::song, SIGNAL(playChanged(bool)), this, SLOT(playChanged(bool)));
   restoreSolo();
-  _pd->close();
+  _finished = true;
+  if(_pd)
+  {
+    _pd->close();
 
-  const QString title = tr("Export Stems");
-  const QString folder = QDir::toNativeSeparators(_settings.path);
-  if(_cancelled)
-    QMessageBox::information(MusEGlobal::muse, title,
-      tr("The stem export was cancelled. %n file(s) written to %1", nullptr, int(_created.size())).arg(folder));
-  else if(!_failed.isEmpty())
-    QMessageBox::warning(MusEGlobal::muse, title,
-      tr("%n file(s) written to %1", nullptr, int(_created.size())).arg(folder) + "\n\n" +
-      tr("These stems could not be exported:") + "\n" + _failed.join("\n"));
-  else
-    QMessageBox::information(MusEGlobal::muse, title,
-      tr("%n file(s) written to %1", nullptr, int(_created.size())).arg(folder));
+    const QString title = tr("Export Stems");
+    const QString folder = QDir::toNativeSeparators(_settings.path);
+    if(_cancelled)
+      QMessageBox::information(MusEGlobal::muse, title,
+        tr("The stem export was cancelled. %n file(s) written to %1", nullptr, int(_created.size())).arg(folder));
+    else if(!_failed.isEmpty())
+      QMessageBox::warning(MusEGlobal::muse, title,
+        tr("%n file(s) written to %1", nullptr, int(_created.size())).arg(folder) + "\n\n" +
+        tr("These stems could not be exported:") + "\n" + _failed.join("\n"));
+    else
+      QMessageBox::information(MusEGlobal::muse, title,
+        tr("%n file(s) written to %1", nullptr, int(_created.size())).arg(folder));
+  }
+  emit finished(report());
   deleteLater();
 }
 

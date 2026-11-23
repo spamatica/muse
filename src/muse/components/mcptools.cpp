@@ -22,6 +22,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMetaObject>
+#include <QPointer>
 #include <QJsonArray>
 #include <QTimer>
 
@@ -36,6 +37,8 @@
 #include "gconfig.h"
 #include "globals.h"
 #include "marker/marker.h"
+#include "markermixdown.h"
+#include "stemexport.h"
 #include "midi_consts.h"
 #include "midictrl.h"
 #include "midievent.h"
@@ -446,6 +449,204 @@ const Marker* markerFromArgs(const QJsonObject& args, QString& error)
   return count == 1 ? found : nullptr;
 }
 
+
+
+//---------------------------------------------------------
+//   Exports (downmix and stems)
+//---------------------------------------------------------
+
+// The export started through MCP. Only one runs at a time, like in the GUI.
+struct McpExport {
+  QPointer<QObject> job;                  // The MarkerMixdown or StemExport while it runs.
+  std::function<ExportReport()> report;   // Reads the running job.
+  std::function<void()> cancel;
+  QString kind;                           // "mixdown" or "stems".
+  QString path;                           // The file or folder.
+  int id = 0;
+  bool hasLast = false;
+  ExportReport last;                      // Of the last finished one.
+};
+McpExport mcpExport;
+
+QJsonObject exportReportJson(const ExportReport& r, bool running)
+{
+  QJsonObject o;
+  o["id"] = mcpExport.id;
+  o["kind"] = mcpExport.kind;
+  o["path"] = mcpExport.path;
+  o["running"] = running;
+  o["finished"] = r.finished;
+  o["cancelled"] = r.cancelled;
+  o["job"] = r.job;
+  o["jobCount"] = r.jobCount;
+  if(running)
+  {
+    o["percent"] = r.percent;
+    o["current"] = r.current;
+  }
+  QJsonArray created, failed;
+  for(const QString& f : r.created)
+    created.push_back(f);
+  for(const QString& f : r.failed)
+    failed.push_back(f);
+  o["created"] = created;
+  o["failed"] = failed;
+  return o;
+}
+
+// Remembers a started export: the result stays readable after the job has deleted itself.
+template <class Job> void trackExport(Job* job, const QString& kind, const QString& path)
+{
+  mcpExport.job = job;
+  mcpExport.report = [job]() { return job->report(); };
+  mcpExport.cancel = [job]() { job->cancel(); };
+  mcpExport.kind = kind;
+  mcpExport.path = path;
+  ++mcpExport.id;
+  mcpExport.hasLast = false;
+  QObject::connect(job, &Job::finished, [](const ExportReport& r) {
+    mcpExport.last = r;
+    mcpExport.hasLast = true;
+  });
+}
+
+// The project folder, canonical. Empty with error set if the song has not been saved (it has no folder).
+QString projectFolder(QString& error)
+{
+  if(MusEGlobal::museProject == MusEGlobal::museProjectInitPath)
+  {
+    error = QObject::tr("The song has no project folder yet. Save it once in MusE: exports are written inside its folder.");
+    return QString();
+  }
+  const QString c = QFileInfo(MusEGlobal::museProject).canonicalFilePath();
+  if(c.isEmpty())
+    error = QObject::tr("The project folder %1 does not exist.").arg(MusEGlobal::museProject);
+  return c;
+}
+
+// The absolute path of 'path' (relative to the project folder, or absolute), if it is inside the project folder.
+//  Empty with error set otherwise. Links are followed as far as the path exists, so a link can not lead out.
+QString pathInProject(const QString& path, QString& error)
+{
+  const QString project = projectFolder(error);
+  if(project.isEmpty())
+    return QString();
+  const QString abs = QDir::cleanPath(QDir(project).absoluteFilePath(path));
+  // The deepest part of the path that exists, resolved.
+  QString existing = abs, rest;
+  while(!QFileInfo::exists(existing))
+  {
+    const int slash = existing.lastIndexOf('/');
+    if(slash <= 0)
+      break;
+    rest = existing.mid(slash) + rest;
+    existing = existing.left(slash);
+  }
+  const QString resolved = QFileInfo(existing).canonicalFilePath() + rest;
+  if(resolved != project && !resolved.startsWith(project + "/"))
+  {
+    error = QObject::tr("%1 is not inside the project folder %2. Exports can only be written there.").arg(path, project);
+    return QString();
+  }
+  return resolved;
+}
+
+// The properties for the file format, shared by the export tools.
+void addFormatProps(QJsonObject& props)
+{
+  QJsonArray names;
+  for(const MixdownFormat& f : availableMixdownFormats())
+    names.push_back(QString(f.name));
+  QJsonObject format = prop("string", QObject::tr("File format, wav16 if left out. ogg and mp3 are only listed if "
+                                                  "MusE's libsndfile supports them."));
+  format["enum"] = names;
+  props["format"] = format;
+  props["channels"] = prop("integer", QObject::tr("1 (mono) or 2 (stereo, the default)."));
+  props["quality"] = prop("number", QObject::tr("For ogg and mp3: 0.0 (smallest) to 1.0 (best). 0.4 if left out."));
+  props["mode"] = prop("string", QObject::tr("\"range\" (the default): between the left and right locators (the range "
+                                             "markers). \"markers\": one for each named marker, from it to the next "
+                                             "marker (the last one to the end of the song)."));
+  props["overwrite"] = prop("boolean", QObject::tr("true to replace files that exist. Otherwise the export is refused "
+                                                   "if one would be replaced."));
+}
+
+// The settings from format, channels, quality and mode. False with error set if they are not valid.
+bool mixdownSettingsFromArgs(const QJsonObject& args, MixdownSettings& s, QString& error)
+{
+  const QString name = args.value("format").toString("wav16");
+  bool found = false;
+  for(const MixdownFormat& f : availableMixdownFormats())
+    if(name == f.name)
+    {
+      s.format = f.format;
+      found = true;
+    }
+  if(!found)
+  {
+    error = QObject::tr("The format %1 is not available.").arg(name);
+    return false;
+  }
+  s.channels = args.value("channels").toInt(2);
+  if(s.channels != 1 && s.channels != 2)
+  {
+    error = QObject::tr("channels must be 1 or 2.");
+    return false;
+  }
+  if(s.extension() == "wav")
+    s.quality = -1.0;
+  else
+  {
+    s.quality = args.value("quality").toDouble(0.4);
+    if(!(s.quality >= 0.0 && s.quality <= 1.0))
+    {
+      error = QObject::tr("quality must be 0.0 to 1.0.");
+      return false;
+    }
+  }
+  const QString mode = args.value("mode").toString("range");
+  if(mode != "range" && mode != "markers")
+  {
+    error = QObject::tr("mode must be \"range\" or \"markers\".");
+    return false;
+  }
+  s.markerMode = mode == "markers";
+  return true;
+}
+
+// The name used in the file names, as in the GUI.
+QString exportProjectName()
+{
+  const QString n = MusEGlobal::muse->projectFileInfo().completeBaseName();
+  return n.isEmpty() ? QString("untitled") : n;
+}
+
+// Why an export can not start, also if one started through MCP is still running.
+QString exportBusy()
+{
+  if(mcpExport.job)
+    return QObject::tr("An export is running (see get_export_status).");
+  return exportBlockedReason();
+}
+
+// The output track named in args[key], or the only one if not given. Null with error set.
+AudioOutput* outputFromArgs(const QJsonObject& args, const char* key, QString& error)
+{
+  const OutputList* ol = MusEGlobal::song->outputs();
+  if(!args.contains(key))
+  {
+    if(ol->size() == 1)
+      return ol->front();
+    error = ol->empty() ? QObject::tr("There is no audio output track.")
+                        : QObject::tr("There are %1 audio output tracks: Give %2.").arg(ol->size()).arg(key);
+    return nullptr;
+  }
+  const QString name = args.value(key).toString();
+  for(AudioOutput* ao : *ol)
+    if(ao->name() == name)
+      return ao;
+  error = QObject::tr("There is no audio output track named \"%1\".").arg(name);
+  return nullptr;
+}
 
 
 const char* pluginTypeName(MusEPlugin::PluginType t)
@@ -3251,6 +3452,172 @@ void registerMcpTools(McpServer& server)
       QJsonObject o;
       o["saved"] = true;
       o["project"] = MusEGlobal::museProject;
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+
+  //---------------------------------------------------------
+  //   export_mixdown / export_stems / get_export_status / cancel_export
+  //---------------------------------------------------------
+  {
+    QJsonObject props;
+    addFormatProps(props);
+    props["output"] = prop("string", QObject::tr("The audio output track to mix down. Needed if there is more than one."));
+    props["path"] = prop("string", QObject::tr("In the project folder (relative to it, or absolute inside it). Range "
+                                               "mode: the file, default downmix/<project>_downmix.<ext> (the extension "
+                                               "of the format is added if missing). Markers mode: the folder, default "
+                                               "downmix; the files are <project>_<marker>.<ext>, numbered instead of "
+                                               "replacing a file."));
+    McpTool t = controlTool("export_mixdown",
+      QObject::tr("Renders the downmix of an output track to a file in the project folder, like Render Downmix to a "
+                  "File, offline (faster than real time) using the transport. Starts it and answers at once: follow it "
+                  "with get_export_status. The transport must be stopped. The song must have been saved once."),
+      schema(props), McpTierDangerous);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      MixdownSettings s;
+      AudioOutput* ao = nullptr;
+      if(!(error = exportBusy()).isEmpty() || !mixdownSettingsFromArgs(args, s, error) ||
+         !(ao = outputFromArgs(args, "output", error)))
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      const QString project = exportProjectName();
+      QString path = args.value("path").toString(s.markerMode ? QString("downmix")
+                                                              : QString("downmix/%1_downmix").arg(project));
+      if(!s.markerMode && QFileInfo(path).suffix().toLower() != s.extension())
+        path += "." + s.extension();
+      s.path = pathInProject(path, error);
+      if(s.path.isEmpty())
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      MarkerMixdown* mm = MarkerMixdown::begin(ao, s, project, args.value("overwrite").toBool(), &error);
+      if(!mm)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      trackExport(mm, "mixdown", s.path);
+      QJsonObject o = exportReportJson(mm->report(), true);
+      o["output"] = ao->name();
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    QJsonObject props;
+    addFormatProps(props);
+    props["tracks"] = trackListProp(QObject::tr("The tracks to export, one file each: wave, midi (the synth it plays), "
+                                                "synth and group tracks."));
+    props["throughOutput"] = prop("string", QObject::tr("Take each stem from this output track, after its effects and "
+                                                        "fader, instead of from the track itself (post fader, with the "
+                                                        "aux returns)."));
+    props["path"] = prop("string", QObject::tr("The folder, in the project folder (relative to it, or absolute inside "
+                                               "it). Default downmix/stems. Range mode: <project>_<track>.<ext>; markers "
+                                               "mode: <marker>/<project>_<marker>_<track>.<ext>."));
+    McpTool t = controlTool("export_stems",
+      QObject::tr("Exports stems like Export Stems: one file per track (and per named marker in markers mode), each "
+                  "rendered offline with the track and the aux tracks soloed; the solo states are put back afterwards. "
+                  "Starts it and answers at once: follow it with get_export_status. The transport must be stopped. "
+                  "The song must have been saved once."),
+      schema(props, {"tracks"}), McpTierDangerous);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      MixdownSettings s;
+      if(!(error = exportBusy()).isEmpty() || !mixdownSettingsFromArgs(args, s, error))
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      AudioOutput* through = nullptr;
+      if(args.contains("throughOutput") && !(through = outputFromArgs(args, "throughOutput", error)))
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      std::vector<Track*> tracks;
+      const QJsonArray names = args.value("tracks").toArray();
+      for(const QJsonValue& v : names)
+      {
+        Track* tr = MusEGlobal::song->findTrack(v.toString());
+        QString why;
+        if(!tr)
+          error = QObject::tr("There is no track named \"%1\".").arg(v.toString());
+        else if(!StemExport::listed(tr) || !StemExport::source(tr, &why))
+          error = QObject::tr("\"%1\" can not be exported: %2").arg(tr->name(),
+                    why.isEmpty() ? QObject::tr("Only wave, midi, synth and group tracks can be exported as stems.") : why);
+        else if(std::find(tracks.begin(), tracks.end(), tr) == tracks.end())
+          tracks.push_back(tr);
+        if(!error.isEmpty())
+        {
+          done(QJsonObject(), error);
+          return;
+        }
+      }
+      if(tracks.empty())
+      {
+        done(QJsonObject(), QObject::tr("Give the tracks to export."));
+        return;
+      }
+      // In song order, like the dialog.
+      std::vector<Track*> ordered;
+      for(Track* tr : *MusEGlobal::song->tracks())
+        if(std::find(tracks.begin(), tracks.end(), tr) != tracks.end())
+          ordered.push_back(tr);
+      s.path = pathInProject(args.value("path").toString("downmix/stems"), error);
+      if(s.path.isEmpty())
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      StemExport* se = StemExport::begin(s, ordered, through, exportProjectName(),
+                                         args.value("overwrite").toBool(), &error);
+      if(!se)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      trackExport(se, "stems", s.path);
+      done(exportReportJson(se->report(), true), QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t;
+    t.name = "get_export_status";
+    t.description = QObject::tr("The state of the export started with export_mixdown or export_stems: running, the "
+                                "job (file) it is at and its percentage, and the files written so far. When it is "
+                                "finished: the files written, those that failed, and whether it was cancelled.");
+    t.inputSchema = schema();
+    t.handler = [](const QJsonObject&, McpDone done) {
+      if(mcpExport.job)
+        done(exportReportJson(mcpExport.report(), true), QString());
+      else if(mcpExport.hasLast)
+        done(exportReportJson(mcpExport.last, false), QString());
+      else
+        done(QJsonObject(), QObject::tr("No export has been started through MCP since MusE was started."));
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("cancel_export",
+      QObject::tr("Cancels the running export (started with export_mixdown or export_stems). The file being "
+                  "rendered is incomplete (stems: removed); the others are not started."),
+      schema());
+    t.handler = [](const QJsonObject&, McpDone done) {
+      if(!mcpExport.job)
+      {
+        done(QJsonObject(), QObject::tr("No export is running."));
+        return;
+      }
+      mcpExport.cancel();
+      QJsonObject o;
+      o["cancelling"] = true;
+      o["id"] = mcpExport.id;
       done(o, QString());
     };
     server.addTool(t);
