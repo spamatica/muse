@@ -44,6 +44,7 @@
 #include "midictrl.h"
 #include "midievent.h"
 #include "midiport.h"
+#include "components/mixerconfig.h"
 #include "popupmenu.h"
 #include "midiedit/drummap.h"
 #include "synth.h"
@@ -244,6 +245,40 @@ QJsonObject partJson(const Part* part)
   return o;
 }
 
+const char* automationTypeName(AutomationType a)
+{
+  switch(a)
+  {
+    case AUTO_OFF:   return "off";
+    case AUTO_READ:  return "read";
+    case AUTO_TOUCH: return "touch";
+    case AUTO_LATCH: return "latch";
+    case AUTO_WRITE: return "write";
+  }
+  return "off";
+}
+
+// The controllers of the midi mixer strip.
+struct McpMidiStripCtrl { const char* name; int num; };
+const McpMidiStripCtrl mcpMidiStripCtrls[] = {
+  { "volume", CTRL_VOLUME }, { "pan", CTRL_PANPOT }, { "reverb", CTRL_REVERB_SEND },
+  { "chorus", CTRL_CHORUS_SEND }, { "variation", CTRL_VARIATION_SEND } };
+
+// The value of a controller on the port and channel of a midi track as the strip shows it (without the bias),
+//  or null if it is not known (off). Does not create the controller.
+QJsonValue midiCtrlValue(const MidiTrack* mt, int num)
+{
+  const int port = mt->outPort(), chan = mt->outChannel();
+  if(port < 0 || port >= MIDI_PORTS || chan < 0 || chan >= MUSE_MIDI_CHANNELS)
+    return QJsonValue();
+  const MidiPort* mp = &MusEGlobal::midiPorts[port];
+  const MidiController* mc = mp->midiController(num, chan, false);
+  const int v = mp->hwCtrlState(chan, num);
+  if(!mc || v == CTRL_VAL_UNKNOWN)
+    return QJsonValue();
+  return v - mc->bias();
+}
+
 QJsonObject trackJson(const Track* t, bool detail)
 {
   QJsonObject o;
@@ -259,6 +294,8 @@ QJsonObject trackJson(const Track* t, bool detail)
   if(!t->comment().isEmpty())
     o["comment"] = t->comment();
   o["partCount"] = t->isFolderTrack() ? 0 : int(t->cparts()->size());
+  if(detail && !t->isFolderTrack())
+    o["automationType"] = automationTypeName(t->automationType());
 
   if(t->isMidiTrack())
   {
@@ -270,6 +307,21 @@ QJsonObject trackJson(const Track* t, bool detail)
       const MidiInstrument* mi = MusEGlobal::midiPorts[mt->outPort()].instrument();
       if(mi)
         o["instrument"] = mi->iname();
+    }
+    if(detail)
+    {
+      o["monitorInput"] = mt->recMonitor();
+      QJsonObject props;
+      props["transpose"] = mt->transposition;
+      props["delay"] = mt->delay;
+      props["lengthPercent"] = mt->len;
+      props["velocity"] = mt->velocity;
+      props["compressionPercent"] = mt->compression;
+      o["properties"] = props;
+      QJsonObject ctrls;
+      for(const McpMidiStripCtrl& c : mcpMidiStripCtrls)
+        ctrls[c.name] = midiCtrlValue(mt, c.num);
+      o["controllers"] = ctrls;
     }
   }
   else if(t->isAudioTrack())
@@ -518,7 +570,7 @@ QString projectFolder(QString& error)
 {
   if(MusEGlobal::museProject == MusEGlobal::museProjectInitPath)
   {
-    error = QObject::tr("The song has no project folder yet. Save it once in MusE: exports are written inside its folder.");
+    error = QObject::tr("The song has no project folder yet. Save it once in MusE: files are written and read inside its folder.");
     return QString();
   }
   const QString c = QFileInfo(MusEGlobal::museProject).canonicalFilePath();
@@ -548,7 +600,7 @@ QString pathInProject(const QString& path, QString& error)
   const QString resolved = QFileInfo(existing).canonicalFilePath() + rest;
   if(resolved != project && !resolved.startsWith(project + "/"))
   {
-    error = QObject::tr("%1 is not inside the project folder %2. Exports can only be written there.").arg(path, project);
+    error = QObject::tr("%1 is not inside the project folder %2. Files can only be written and read there.").arg(path, project);
     return QString();
   }
   return resolved;
@@ -2837,6 +2889,436 @@ void registerMcpTools(McpServer& server)
   }
 
   //---------------------------------------------------------
+  //   Mixer strips: set_aux_send, set_track_gain, set_track_prefader, set_track_off, set_track_monitor,
+  //   set_track_channels, set_automation_type, set_midi_controller, set_midi_track_properties, move_plugin
+  //---------------------------------------------------------
+  {
+    McpTool t = controlTool("set_aux_send",
+      QObject::tr("Sets the send level of an audio track to an aux track, like the aux knob of the mixer strip. -60 dB "
+                  "or less is off, +10 dB at most. Not undoable, like in the GUI. get_track shows the sends."),
+      schema({{"track", prop("string", QObject::tr("Audio track name."))},
+              {"aux", prop("string", QObject::tr("Name of the aux track."))},
+              {"level_db", prop("number", QObject::tr("Send level in dB."))}}, {"track", "aux", "level_db"}));
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = trackFromArgs(args, true, error);
+      if(!tr)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      AudioTrack* at = static_cast<AudioTrack*>(tr);
+      if(!at->hasAuxSend())
+      {
+        done(QJsonObject(), QObject::tr("\"%1\" has no aux sends.").arg(at->name()));
+        return;
+      }
+      const QString aux = args.value("aux").toString();
+      const AuxList* auxs = MusEGlobal::song->auxs();
+      int idx = -1;
+      for(unsigned i = 0; i < auxs->size(); ++i)
+        if((*auxs)[i]->name() == aux)
+          idx = int(i);
+      if(idx < 0)
+      {
+        done(QJsonObject(), QObject::tr("There is no aux track named \"%1\".").arg(aux));
+        return;
+      }
+      if(!args.value("level_db").isDouble())
+      {
+        done(QJsonObject(), QObject::tr("level_db must be a number."));
+        return;
+      }
+      const double db = args.value("level_db").toDouble();
+      const double v = db <= MusEGlobal::config.minSlider ? 0.0 : std::pow(10.0, qMin(db, 10.0) / 20.0);
+      MusEGlobal::audio->msgSetAux(at, idx, v);
+      QJsonObject o;
+      o["track"] = at->name();
+      o["aux"] = aux;
+      o["value"] = round4(v);
+      o["db"] = round2(toDb(v));
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("set_track_gain",
+      QObject::tr("Sets the gain (calibration gain) of an audio track, a factor of 0.5 to 20 applied before the fader, "
+                  "like the gain knob of the mixer strip. 1 is unchanged. Not undoable, like in the GUI."),
+      schema({{"track", prop("string", QObject::tr("Audio track name."))},
+              {"gain", prop("number", QObject::tr("The factor, 0.5 to 20."))}}, {"track", "gain"}));
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = trackFromArgs(args, true, error);
+      if(!tr || !args.value("gain").isDouble())
+      {
+        done(QJsonObject(), tr ? QObject::tr("gain must be a number.") : error);
+        return;
+      }
+      AudioTrack* at = static_cast<AudioTrack*>(tr);
+      const double g = qBound(0.5, args.value("gain").toDouble(), 20.0);
+      if(at->gain() != g)
+        at->setGain(g);
+      QJsonObject o;
+      o["track"] = at->name();
+      o["gain"] = round4(g);
+      o["gainDb"] = round2(toDb(g));
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("set_track_prefader",
+      QObject::tr("Switches pre fader listening (PFL) of an audio track on or off: the meters and the aux sends then "
+                  "take the signal before the fader. Not undoable, like in the GUI."),
+      schema({{"track", prop("string", QObject::tr("Audio track name."))},
+              {"on", prop("boolean", QObject::tr("true for pre fader."))}}, {"track", "on"}));
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = trackFromArgs(args, true, error);
+      if(!tr)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      AudioTrack* at = static_cast<AudioTrack*>(tr);
+      const bool on = args.value("on").toBool();
+      if(at->prefader() != on)
+      {
+        MusEGlobal::audio->msgSetPrefader(at, on);
+        MusEGlobal::song->update(SC_ROUTE);
+      }
+      QJsonObject o;
+      o["track"] = at->name();
+      o["prefader"] = at->prefader();
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  for(int k = 0; k < 2; ++k)
+  {
+    const bool off = k == 0;
+    McpTool t = off
+      ? controlTool("set_track_off",
+          QObject::tr("Switches a track off (it is not processed at all and makes no sound) or on again, like the "
+                      "power button of the mixer strip. Not undoable, like in the GUI."),
+          schema({{"track", prop("string", QObject::tr("Track name."))},
+                  {"off", prop("boolean", QObject::tr("true to switch the track off."))}}, {"track", "off"}))
+      : controlTool("set_track_monitor",
+          QObject::tr("Switches the input monitor of a track on or off: the input is passed through to the output, to "
+                      "hear what is being played or recorded. Wave, midi, drum and audio input tracks. Not undoable, "
+                      "like in the GUI."),
+          schema({{"track", prop("string", QObject::tr("Track name."))},
+                  {"on", prop("boolean", QObject::tr("true for monitoring."))}}, {"track", "on"}));
+    t.handler = [off](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = trackFromArgs(args, false, error);
+      if(!tr)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      if(!off && !tr->canRecordMonitor())
+      {
+        done(QJsonObject(), QObject::tr("\"%1\" has no input monitor.").arg(tr->name()));
+        return;
+      }
+      const bool val = args.value(off ? "off" : "on").toBool();
+      if((off ? tr->off() : tr->recMonitor()) != val)
+      {
+        PendingOperationList operations;
+        operations.add(PendingOperationItem(tr, val, off ? PendingOperationItem::SetTrackOff
+                                                         : PendingOperationItem::SetTrackRecMonitor));
+        MusEGlobal::audio->msgExecutePendingOperations(operations, true);
+      }
+      QJsonObject o;
+      o["track"] = tr->name();
+      if(off)
+        o["off"] = tr->off();
+      else
+        o["monitorInput"] = tr->recMonitor();
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("set_track_channels",
+      QObject::tr("Makes an audio track mono (1) or stereo (2), like the 1/2 channel button of the mixer strip. Not "
+                  "undoable, like in the GUI."),
+      schema({{"track", prop("string", QObject::tr("Audio track name."))},
+              {"channels", prop("integer", QObject::tr("1 or 2."))}}, {"track", "channels"}));
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = trackFromArgs(args, true, error);
+      if(!tr)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      const int ch = args.value("channels").toInt(0);
+      if(ch != 1 && ch != 2)
+      {
+        done(QJsonObject(), QObject::tr("channels must be 1 or 2."));
+        return;
+      }
+      AudioTrack* at = static_cast<AudioTrack*>(tr);
+      if(at->channels() != ch)
+      {
+        MusEGlobal::audio->msgSetChannels(at, ch);
+        MusEGlobal::song->update(SC_CHANNELS);
+      }
+      QJsonObject o;
+      o["track"] = at->name();
+      o["channels"] = at->channels();
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    QJsonObject type = prop("string", QObject::tr("off: the automation is not played. read: it is played. touch: it is "
+                                                  "played, and moving a control while playing records until it is "
+                                                  "released. latch: like touch, but records until the transport stops. "
+                                                  "write: records the controls while playing."));
+    type["enum"] = QJsonArray{"off", "read", "touch", "latch", "write"};
+    McpTool t = controlTool("set_automation_type",
+      QObject::tr("Sets the automation mode of a track, like the automation button of the mixer strip. Not undoable, "
+                  "like in the GUI."),
+      schema({{"track", prop("string", QObject::tr("Track name."))}, {"type", type}}, {"track", "type"}));
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = trackFromArgs(args, false, error);
+      if(!tr)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      const QString name = args.value("type").toString();
+      int type = -1;
+      for(AutomationType a : {AUTO_OFF, AUTO_READ, AUTO_TOUCH, AUTO_LATCH, AUTO_WRITE})
+        if(name == automationTypeName(a))
+          type = a;
+      if(type < 0)
+      {
+        done(QJsonObject(), QObject::tr("type must be off, read, touch, latch or write."));
+        return;
+      }
+      if(tr->automationType() != type)
+      {
+        MusEGlobal::audio->msgSetTrackAutomationType(tr, type);
+        MusEGlobal::song->update(SC_AUTOMATION);
+      }
+      QJsonObject o;
+      o["track"] = tr->name();
+      o["automationType"] = automationTypeName(tr->automationType());
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("set_midi_controller",
+      QObject::tr("Sets a controller of a midi or drum track on its port and channel, like the knobs of the midi mixer "
+                  "strip: volume, pan, reverb, chorus, variation, or any controller number. Sends it to the instrument "
+                  "now; it is not stored in the parts. Not undoable, like in the GUI. get_track shows the strip's "
+                  "controllers."),
+      schema({{"track", prop("string", QObject::tr("Midi or drum track name."))},
+              {"controller", prop("string", QObject::tr("volume, pan, reverb, chorus or variation, or a controller "
+                                                         "number 0-127."))},
+              {"value", prop("integer", QObject::tr("The value, in the range of the controller (0-127 for most; pan "
+                                                     "is -64 to 63)."))},
+              {"off", prop("boolean", QObject::tr("true to set the controller to off (unknown) instead of a value."))}},
+             {"track", "controller"}));
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = trackFromArgs(args, false, error);
+      if(!tr || !tr->isMidiTrack())
+      {
+        done(QJsonObject(), tr ? QObject::tr("\"%1\" is not a midi or drum track.").arg(tr->name()) : error);
+        return;
+      }
+      MidiTrack* mt = static_cast<MidiTrack*>(tr);
+      const QJsonValue cv = args.value("controller");
+      int num = -1;
+      for(const McpMidiStripCtrl& c : mcpMidiStripCtrls)
+        if(cv.toString() == c.name)
+          num = c.num;
+      if(num < 0)
+      {
+        bool ok = false;
+        const int n = cv.isDouble() ? cv.toInt(-1) : cv.toString().toInt(&ok);
+        if((cv.isDouble() || ok) && n >= 0 && n <= 127)
+          num = n;
+      }
+      if(num < 0)
+      {
+        done(QJsonObject(), QObject::tr("controller must be volume, pan, reverb, chorus, variation or a number 0-127."));
+        return;
+      }
+      const int port = mt->outPort(), chan = mt->outChannel();
+      if(port < 0 || port >= MIDI_PORTS || chan < 0 || chan >= MUSE_MIDI_CHANNELS)
+      {
+        done(QJsonObject(), QObject::tr("The track has no midi port."));
+        return;
+      }
+      MidiPort* mp = &MusEGlobal::midiPorts[port];
+      // Auto-creates the controller, as the strip does.
+      MidiController* mc = mp->midiController(num, chan);
+      if(!mc)
+      {
+        done(QJsonObject(), QObject::tr("The controller is not available on this port."));
+        return;
+      }
+      const bool off = args.value("off").toBool();
+      int ival = CTRL_VAL_UNKNOWN;
+      if(!off)
+      {
+        if(!args.value("value").isDouble())
+        {
+          done(QJsonObject(), QObject::tr("Give value or off."));
+          return;
+        }
+        ival = args.value("value").toInt();
+        if(ival < mc->minVal() || ival > mc->maxVal())
+        {
+          done(QJsonObject(), QObject::tr("value must be %1 to %2.").arg(mc->minVal()).arg(mc->maxVal()));
+          return;
+        }
+        ival += mc->bias();
+      }
+      MidiPlayEvent ev(MusEGlobal::audio->curFrame(), port, chan, ME_CONTROLLER, num, ival);
+      mp->putEvent(ev);
+      QJsonObject o;
+      o["track"] = mt->name();
+      o["controller"] = num;
+      o["name"] = mc->name();
+      o["value"] = off ? QJsonValue() : QJsonValue(ival - mc->bias());
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("set_midi_track_properties",
+      QObject::tr("Sets the playback properties of a midi or drum track, like the property knobs of the midi mixer "
+                  "strip. They change how the track plays, not the notes in the parts. Give any of them. Not undoable, "
+                  "like in the GUI."),
+      schema({{"track", prop("string", QObject::tr("Midi or drum track name."))},
+              {"transpose", prop("integer", QObject::tr("Semitones, -127 to 127."))},
+              {"delay", prop("integer", QObject::tr("Ticks to play the notes later (or earlier, negative), -1000 to 1000."))},
+              {"length_percent", prop("integer", QObject::tr("Note length in percent, 25 to 200."))},
+              {"velocity", prop("integer", QObject::tr("Added to the velocity of the notes, -127 to 127."))},
+              {"compression_percent", prop("integer", QObject::tr("Velocity range in percent, 25 to 200."))}},
+             {"track"}));
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = trackFromArgs(args, false, error);
+      if(!tr || !tr->isMidiTrack())
+      {
+        done(QJsonObject(), tr ? QObject::tr("\"%1\" is not a midi or drum track.").arg(tr->name()) : error);
+        return;
+      }
+      MidiTrack* mt = static_cast<MidiTrack*>(tr);
+      struct P { const char* key; int* field; int min, max; };
+      const P ps[] = {
+        { "transpose", &mt->transposition, MidiTrack::transpositionMin, MidiTrack::transpositionMax },
+        { "delay", &mt->delay, MidiTrack::delayMin, MidiTrack::delayMax },
+        { "length_percent", &mt->len, MidiTrack::lenMin, MidiTrack::lenMax },
+        { "velocity", &mt->velocity, MidiTrack::velocityMin, MidiTrack::velocityMax },
+        { "compression_percent", &mt->compression, MidiTrack::compressionMin, MidiTrack::compressionMax } };
+      bool any = false;
+      for(const P& p : ps)
+        if(args.contains(p.key))
+        {
+          any = true;
+          const int v = args.value(p.key).toInt(INT_MIN);
+          if(!args.value(p.key).isDouble() || v < p.min || v > p.max)
+          {
+            done(QJsonObject(), QObject::tr("%1 must be %2 to %3.").arg(p.key).arg(p.min).arg(p.max));
+            return;
+          }
+        }
+      if(!any)
+      {
+        done(QJsonObject(), QObject::tr("Give at least one property."));
+        return;
+      }
+      // Set directly, as the strip does.
+      for(const P& p : ps)
+        if(args.contains(p.key))
+          *p.field = args.value(p.key).toInt();
+      MusEGlobal::song->update(SC_MIDI_TRACK_PROP);
+      QJsonObject o = trackJson(mt, true);
+      done(QJsonObject{{"track", mt->name()}, {"properties", o.value("properties")}}, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    McpTool t = controlTool("move_plugin",
+      QObject::tr("Moves an effect plugin to another slot of the effect rack, also of another audio track, with its "
+                  "settings and automation. Undoable. On the same track an occupied slot swaps the two plugins; on "
+                  "another track an occupied slot is only replaced (that plugin is removed) with replace."),
+      schema({{"track", prop("string", QObject::tr("Audio track of the plugin."))},
+              {"slot", prop("integer", QObject::tr("Its effect slot, as in get_track."))},
+              {"to_slot", prop("integer", QObject::tr("The slot to move it to."))},
+              {"to_track", prop("string", QObject::tr("The audio track to move it to. The same if left out."))},
+              {"replace", prop("boolean", QObject::tr("true to replace a plugin in the slot of another track."))}},
+             {"track", "slot", "to_slot"}),
+      McpTierEdit);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      Track* tr = trackFromArgs(args, true, error);
+      if(!tr)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      AudioTrack* src = static_cast<AudioTrack*>(tr);
+      AudioTrack* dst = src;
+      if(args.contains("to_track"))
+      {
+        Track* d = trackFromArgs(QJsonObject{{"track", args.value("to_track")}}, true, error);
+        if(!d)
+        {
+          done(QJsonObject(), error);
+          return;
+        }
+        dst = static_cast<AudioTrack*>(d);
+      }
+      const int s = args.value("slot").toInt(0) - 1, d = args.value("to_slot").toInt(0) - 1;
+      if(s < 0 || s >= PipelineDepth || d < 0 || d >= PipelineDepth)
+      {
+        done(QJsonObject(), QObject::tr("The slots must be 1 to %1.").arg(int(PipelineDepth)));
+        return;
+      }
+      if(!(*src->efxPipe())[s])
+      {
+        done(QJsonObject(), QObject::tr("There is no plugin in that slot."));
+        return;
+      }
+      if(src == dst && s == d)
+      {
+        done(QJsonObject(), QObject::tr("The plugin is in that slot already."));
+        return;
+      }
+      const bool occupied = (*dst->efxPipe())[d] != nullptr;
+      if(src == dst && occupied)
+        MusEGlobal::song->applyOperation(UndoOp(UndoOp::SwapRackEffectPlugins, src, double(s), double(d), 0.0, 0.0, 0.0));
+      else if(occupied && !args.value("replace").toBool())
+      {
+        done(QJsonObject(), QObject::tr("The slot is in use. Set replace to replace it."));
+        return;
+      }
+      else
+        MusEGlobal::song->applyOperation(UndoOp(UndoOp::MoveRackEffectPlugin, src, dst, s, d));
+      QJsonObject o;
+      o["track"] = dst->name();
+      o["slot"] = d + 1;
+      const PluginI* p = (*dst->efxPipe())[d];
+      o["plugin"] = p ? p->name() : QString();
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+
+  //---------------------------------------------------------
   //   add_route / remove_route
   //---------------------------------------------------------
   for(int k = 0; k < 2; ++k)
@@ -3826,6 +4308,170 @@ void registerMcpTools(McpServer& server)
       QJsonObject o;
       o["saved"] = true;
       o["project"] = MusEGlobal::museProject;
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+
+  //---------------------------------------------------------
+  //   save_mixer_config / load_mixer_config
+  //---------------------------------------------------------
+  {
+    McpTool t = controlTool("save_mixer_config",
+      QObject::tr("Saves the mixer configuration of the audio tracks (faders, mute/solo/off, prefader, aux sends, effect "
+                  "plugins with their settings and automation, routes) to a file in the project folder, like Save Mixer "
+                  "Configuration. An existing file is only replaced with overwrite."),
+      schema({{"path", prop("string", QObject::tr("The file, in the project folder. Default <project>.med_mixer_config; "
+                                                   "the extension is added if missing."))},
+              {"overwrite", prop("boolean", QObject::tr("true to replace an existing file."))}}),
+      McpTierDangerous);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString path = args.value("path").toString(exportProjectName());
+      if(QFileInfo(path).suffix() != "med_mixer_config")
+        path += ".med_mixer_config";
+      QString error;
+      const QString abs = pathInProject(path, error);
+      if(abs.isEmpty())
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      if(QFileInfo::exists(abs) && !args.value("overwrite").toBool())
+      {
+        done(QJsonObject(), QObject::tr("The file %1 exists.").arg(abs));
+        return;
+      }
+      QDir().mkpath(QFileInfo(abs).absolutePath());
+      QFile f(abs);
+      if(!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+      {
+        done(QJsonObject(), QObject::tr("Can not write %1: %2").arg(abs, f.errorString()));
+        return;
+      }
+      const bool ok = MixerSnapshot::saveSong(&f, &error);
+      f.close();
+      if(!ok)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      QJsonObject o;
+      o["path"] = abs;
+      done(o, QString());
+    };
+    server.addTool(t);
+  }
+  {
+    static const struct { const char* name; unsigned bit; } cats[] = {
+      { "fader", MixerFader }, { "flags", MixerFlags }, { "prefader", MixerPrefader }, { "aux_sends", MixerAuxSends },
+      { "plugins", MixerPlugins }, { "routing", MixerRouting }, { "plugin_automation", MixerPluginAutomation },
+      { "port_inputs", MixerPortInputs }, { "port_outputs", MixerPortOutputs } };
+    QJsonArray catNames;
+    for(const auto& c : cats)
+      catNames.push_back(QString(c.name));
+    QJsonObject catProp;
+    catProp["type"] = "array";
+    QJsonObject item = prop("string", QObject::tr("A category."));
+    item["enum"] = catNames;
+    catProp["items"] = item;
+    catProp["description"] = QObject::tr("What to load: fader (volume, pan, gain), flags (mute, solo, off), prefader, "
+                                         "aux_sends, plugins (the effect rack), routing (to other tracks), "
+                                         "plugin_automation, port_inputs and port_outputs (routes to and from the "
+                                         "soundcard). Default: all but port_inputs and port_outputs, as in the dialog.");
+    McpTool t = controlTool("load_mixer_config",
+      QObject::tr("Loads a mixer configuration (a .med_mixer_config file or a song file) from the project folder into "
+                  "the audio tracks with the same name and type, like Load Mixer Configuration. Tracks are never "
+                  "created. With dry_run it only reports what would be done. The answer is the report: what was done "
+                  "and every deviation. The plugins and routes are one undo step; faders, prefader and aux sends can "
+                  "not be undone."),
+      schema({{"path", prop("string", QObject::tr("The file, in the project folder."))},
+              {"categories", catProp},
+              {"tracks", trackListProp(QObject::tr("Only these tracks of the file (by their name in the file). All if "
+                                                   "left out."))},
+              {"dry_run", prop("boolean", QObject::tr("true to only report what would be done."))}}, {"path"}),
+      McpTierDangerous);
+    t.handler = [](const QJsonObject& args, McpDone done) {
+      QString error;
+      const QString abs = pathInProject(args.value("path").toString(), error);
+      if(abs.isEmpty())
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      unsigned categories = MixerAllCategories & ~(MixerPortInputs | MixerPortOutputs);
+      if(args.contains("categories"))
+      {
+        categories = 0;
+        for(const QJsonValue& v : args.value("categories").toArray())
+        {
+          bool found = false;
+          for(const auto& c : cats)
+            if(v.toString() == c.name)
+            {
+              categories |= c.bit;
+              found = true;
+            }
+          if(!found)
+          {
+            done(QJsonObject(), QObject::tr("Unknown category \"%1\".").arg(v.toString()));
+            return;
+          }
+        }
+      }
+      QFile f(abs);
+      if(!f.open(QIODevice::ReadOnly))
+      {
+        done(QJsonObject(), QObject::tr("Can not read %1: %2").arg(abs, f.errorString()));
+        return;
+      }
+      MixerSnapshot snap;
+      const bool ok = snap.load(&f, &error);
+      f.close();
+      if(!ok)
+      {
+        done(QJsonObject(), error);
+        return;
+      }
+      QStringList only;
+      for(const QJsonValue& v : args.value("tracks").toArray())
+        only << v.toString();
+      std::vector<MixerImportChoice> choices;
+      QJsonArray unmatched;
+      for(size_t i = 0; i < snap.tracks.size(); ++i)
+      {
+        const MixerTrackConfig& tc = snap.tracks[i];
+        if(tc.categories() == 0 || (!only.isEmpty() && !only.contains(tc.name)))
+          continue;
+        MixerImportChoice c;
+        c.source = int(i);
+        c.target = MixerSnapshot::findTarget(tc);
+        c.categories = categories;
+        if(!c.target)
+          unmatched.push_back(tc.name);
+        choices.push_back(c);
+      }
+      const bool dry = args.value("dry_run").toBool();
+      MixerImportReport report;
+      snap.apply(choices, dry, report);
+      QJsonArray items;
+      for(const MixerImportReportItem& it : report.items)
+      {
+        QJsonObject io;
+        io["result"] = it.result == MixerImportReportItem::Done ? "done" : "deviation";
+        io["track"] = it.track;
+        io["what"] = it.what;
+        if(!it.note.isEmpty())
+          io["note"] = it.note;
+        items.push_back(io);
+      }
+      QJsonObject o;
+      o["dryRun"] = dry;
+      o["tracksRequested"] = report.tracksRequested;
+      o["tracksMatched"] = report.tracksMatched;
+      o["done"] = report.count(MixerImportReportItem::Done);
+      o["deviations"] = report.count(MixerImportReportItem::Deviation);
+      o["unmatchedTracks"] = unmatched;
+      o["items"] = items;
       done(o, QString());
     };
     server.addTool(t);

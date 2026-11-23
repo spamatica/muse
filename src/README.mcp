@@ -29,7 +29,7 @@ Code:
   AGENTS.md                           short description for coding agents
 
 
-The tools (71)
+The tools (83)
 --------------
 
 Read (always on):
@@ -40,7 +40,11 @@ Read (always on):
 Control (reversible, not undoable, applied like the mixer strips do):
   transport, set_position, set_loop, set_click, set_locators, set_track_mute, set_track_solo,
   set_track_volume, set_track_pan, set_plugin_param, set_plugin_on, set_patch, cancel_export,
-  set_part_mute (not undoable, like the arranger's mute tool)
+  set_part_mute (not undoable, like the arranger's mute tool),
+  mixer strips: set_aux_send, set_track_gain, set_track_prefader, set_track_off, set_track_monitor,
+  set_track_channels, set_automation_type, set_midi_controller (volume, pan, reverb, chorus,
+  variation or any CC of a midi track's port and channel), set_midi_track_properties (transpose,
+  delay, length, velocity, compression)
 
 Record:
   set_track_record_arm, record
@@ -50,16 +54,18 @@ Edit (undoable unless the GUI's own action is not):
   resize_part, rename_part, split_part, glue_parts, copy_part (copy or clone), declone_part,
   set_wave_part_volume (volume and fades),
   add_midi_notes, modify_midi_notes, delete_midi_notes, add_plugin, save_plugin_preset,
-  load_plugin_preset, add_route, remove_route (not undoable, like in the GUI), set_tempo,
+  load_plugin_preset, move_plugin (also to another track), add_route, remove_route (not undoable, like in the GUI), set_tempo,
   set_time_signature, set_tempo_map_enabled (not undoable), set_midi_track_output (not undoable),
   add_marker, modify_marker, delete_marker, undo, redo
 
 Dangerous:
-  delete_track, delete_part, remove_plugin, save_song, export_mixdown, export_stems
+  delete_track, delete_part, remove_plugin, save_song, export_mixdown, export_stems,
+  save_mixer_config, load_mixer_config (with dry_run and the import report)
 
-Exports write only inside the project folder of a saved song (links can not lead out), replace a
-file only with overwrite: true, and run one at a time: the tool starts the export and answers at
-once, get_export_status follows it, cancel_export stops it.
+Files (exports, mixer configurations) are only written and read inside the project folder of a
+saved song (links can not lead out), and replaced only with overwrite: true. Exports run one at a
+time: the tool starts the export and answers at once, get_export_status follows it, cancel_export
+stops it.
 
 
 Rules for adding a tool
@@ -93,18 +99,22 @@ The Edit tier makes scratch tracks (mcptest<pid>-...), the Dangerous tier delete
 the export tests in a scratch folder in the project folder, which it removes. It never records and
 never saves the song.
 
-A run headless, that passes completely (222 checks on 2026-11-23): use the stems test project and
-give MusE a home of its own (without that it may quit while loading the song):
+A run headless, that passes completely (302 checks on 2026-11-23): use the stems test project, give
+MusE a home of its own (without that it may quit while loading the song), and an installed copy of
+the build through APPDIR: MusE starts the plugin scanner by its installed path, and without plugins
+the plugin tests are skipped (list_plugins finds nothing). The LADSPA example plugins (ladspa-sdk)
+and MusE's own are enough.
 
   WORK=/some/scratch/folder
+  make -C build install DESTDIR=$WORK/inst
   STEMTEST_WORK=$WORK tests/stem_export/run.sh build/muse/muse4     # makes $WORK/project and $WORK/home
   CFG=$WORK/home/.config/MusE/MusE
   printf '[General]\nenabled=true\nport=18765\ntiers=31\ntoken=%s\n' \
          $(python3 -c 'import secrets;print(secrets.token_hex(32))') > $CFG/mcp.conf; chmod 600 $CFG/mcp.conf
-  HOME=$WORK/home XDG_CONFIG_HOME=$WORK/home/.config XDG_CACHE_HOME=$WORK/home/.cache \
+  APPDIR=$WORK/inst HOME=$WORK/home XDG_CONFIG_HOME=$WORK/home/.config XDG_CACHE_HOME=$WORK/home/.cache \
   XDG_DATA_HOME=$WORK/home/.local/share QT_QPA_PLATFORM=offscreen \
   LD_LIBRARY_PATH=<the build's folders with .so files> \
-    build/muse/muse4 -b dummy -p -N -I -2 $WORK/project/stemtest.med &
+    build/muse/muse4 -R -b dummy -N -I -2 $WORK/project/stemtest.med &     # -R: scan the plugins
   tests/mcp_smoke_test.py 18765 $(sed -n 's/^token=//p' $CFG/mcp.conf)
 
 With the default (empty) template instead, get_song_info and list_tracks fail for lack of tracks,
@@ -144,7 +154,7 @@ Done:        has a tool now (the tool is named in the Reuse column)
  1  Read automation points of a parameter  Missing  read       CtrlList of AudioTrack::controller()
  2  Add / move / delete automation points  Missing  edit       UndoOp AddAudioCtrlVal, DeleteAudioCtrlVal,
                                                                ModifyAudioCtrlVal(List)
- 3  Automation mode (off/read/write/touch) Missing  control    AudioTrack::setAutomationType()
+ 3  Automation mode (off/read/write/touch) Done     control    set_automation_type
  4  Clear automation, take snapshot        Missing  edit       MusE::clearAutomation(),
                                                                takeAutomationSnapshot()
     PARTS (arranger)
@@ -170,17 +180,17 @@ Done:        has a tool now (the tool is named in the Reuse column)
 20  Controllers (CC), pitch bend,          Missing  read/edit  Song::addEventOperation() with
     program change events in parts                             controller events
 21  Sysex and meta events (list editor)    Missing  edit       liste/ insert code
-22  Midi track settings: transpose,        Missing  control    MidiTrack transposition, velocity,
-    velocity, delay, length, compression                       delay, len, compression
+22  Midi track settings: transpose,        Done     control    set_midi_track_properties; the strip's
+    velocity, delay, length, compression                       controllers: set_midi_controller
 23  Convert midi <-> drum track            Missing  edit       track list "Convert ..." actions
     MIXER / AUDIO TRACKS
-24  Aux send levels                        Partly   control    read in get_track; AudioTrack::setAuxSend()
-25  Gain, prefader                         Missing  control    AudioTrack gain/prefader setters
-26  Track on/off                           Missing  control    PendingOperationItem SetTrackOff
-27  Input monitor                          Missing  control    PendingOperationItem SetTrackRecMonitor
-28  Mono / stereo                          Missing  edit       (mixer strip channel button)
-29  Move / swap plugins between slots      Missing  edit       UndoOp Swap/MoveRackEffectPlugin(s)
-30  Save / load mixer configuration        Missing  dangerous  components/mixerconfig.{h,cpp}
+24  Aux send levels                        Done     control    set_aux_send
+25  Gain, prefader                         Done     control    set_track_gain, set_track_prefader
+26  Track on/off                           Done     control    set_track_off
+27  Input monitor                          Done     control    set_track_monitor
+28  Mono / stereo                          Done     control    set_track_channels
+29  Move / swap plugins between slots      Done     edit       move_plugin
+30  Save / load mixer configuration        Done     dangerous  save_mixer_config, load_mixer_config
     TRACKS
 31  Duplicate track                        Missing  edit       Song::duplicateTracks()
 32  Reorder tracks (up/down/top/bottom)    Missing  edit       Song::moveSelectedTracks(),
@@ -220,9 +230,9 @@ GUI, opening editor windows, plugin and synth GUIs, global settings, shortcuts, 
 appearance, help).
 
 Suggested order (my view, by what an assistant working in a song needs most):
-  1. Automation (1-4)
+  1. Automation (1-4; 3, the mode, is done)
   2. Part editing (5-12): done; 13-15 (color, shrink/expand, global cut/insert/split) are left
-  3. Mixer and track completeness (24-27, 31-33)
+  3. Mixer and track completeness (24-30 done; 31-33 left)
   4. Midi functions and controllers (16-22)
   5. File import/export (42-44)
   6. Tempo, signature and key map (38-39)

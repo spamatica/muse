@@ -122,14 +122,18 @@ READ_TOOLS = {"get_song_info", "get_transport", "list_tracks", "get_track", "lis
               "get_audio_part", "get_tempo_map", "get_drum_map", "list_midi_ports", "list_patches", "get_export_status"}
 CONTROL_TOOLS = {"set_patch", "transport", "set_position", "set_loop", "set_click", "set_locators", "set_track_mute", "set_track_solo",
                  "set_track_volume", "set_track_pan", "set_plugin_param", "set_plugin_on", "cancel_export",
-                 "set_part_mute"}
+                 "set_part_mute", "set_aux_send", "set_track_gain", "set_track_prefader", "set_track_off",
+                 "set_track_monitor", "set_track_channels", "set_automation_type", "set_midi_controller",
+                 "set_midi_track_properties"}
 RECORD_TOOLS = {"set_track_record_arm", "record"}
 EDIT_TOOLS = {"add_track", "rename_track", "add_midi_part", "add_midi_notes", "move_part", "add_route", "remove_route",
               "undo", "redo", "add_plugin", "add_synth_track", "move_tracks_to_folder", "save_plugin_preset",
               "load_plugin_preset", "modify_midi_notes", "delete_midi_notes", "set_tempo", "set_time_signature",
               "set_tempo_map_enabled", "set_midi_track_output", "add_marker", "modify_marker", "delete_marker",
-              "resize_part", "rename_part", "split_part", "glue_parts", "copy_part", "declone_part", "set_wave_part_volume"}
-DANGEROUS_TOOLS = {"delete_track", "delete_part", "remove_plugin", "save_song", "export_mixdown", "export_stems"}
+              "resize_part", "rename_part", "split_part", "glue_parts", "copy_part", "declone_part", "set_wave_part_volume",
+              "move_plugin"}
+DANGEROUS_TOOLS = {"delete_track", "delete_part", "remove_plugin", "save_song", "export_mixdown", "export_stems",
+                   "save_mixer_config", "load_mixer_config"}
 
 check(READ_TOOLS <= set(tools), "tools/list has all the read tools (%d tools)" % len(tools))
 check(all(t["inputSchema"]["type"] == "object" for t in tools.values()), "every tool has an object schema")
@@ -661,12 +665,82 @@ if has_control:
         check(r is not None and r["pan"] == 1.0, "set_track_pan is limited to 1")
         ok("set_track_pan", {"track": target, "pan": orig["pan"]})
         check(wait_for(lambda: abs(track_info(target)["pan"] - orig["pan"]) < 0.01), "the pan is put back")
+
+        # Mixer strip.
+        if orig.get("auxSends"):
+            aux = orig["auxSends"][0]
+            r = ok("set_aux_send", {"track": target, "aux": aux["aux"], "level_db": -12})
+            check(r is not None and abs(r["db"] + 12) < 0.05, "set_aux_send")
+            check(wait_for(lambda: abs(track_info(target)["auxSends"][0]["db"] + 12) < 0.05), "get_track shows the aux send")
+            r = ok("set_aux_send", {"track": target, "aux": aux["aux"], "level_db": -100})
+            check(r is not None and r["value"] == 0, "set_aux_send -60 dB or less is off")
+            r = ok("set_aux_send", {"track": target, "aux": aux["aux"], "level_db": 40})
+            check(r is not None and r["db"] <= 10.01, "set_aux_send is limited to +10 dB")
+            ok("set_aux_send", {"track": target, "aux": aux["aux"], "level_db": aux["db"] if aux["value"] > 0 else -100})
+            check(wait_for(lambda: abs(track_info(target)["auxSends"][0]["value"] - aux["value"]) < 0.001), "the aux send is put back")
+            check(fails("set_aux_send", {"track": target, "aux": "no such aux", "level_db": 0}), "set_aux_send to a wrong aux is refused")
+        r = ok("set_track_gain", {"track": target, "gain": 2})
+        check(r is not None and r["gain"] == 2 and track_info(target)["gain"] == 2, "set_track_gain")
+        r = ok("set_track_gain", {"track": target, "gain": 0.01})
+        check(r is not None and r["gain"] == 0.5, "set_track_gain is limited like the knob")
+        ok("set_track_gain", {"track": target, "gain": orig["gain"]})
+        r = ok("set_track_prefader", {"track": target, "on": not orig["prefader"]})
+        check(r is not None and r["prefader"] == (not orig["prefader"]), "set_track_prefader")
+        ok("set_track_prefader", {"track": target, "on": orig["prefader"]})
+        r = ok("set_track_off", {"track": target, "off": True})
+        check(r is not None and r["off"] is True and track_info(target)["off"] is True, "set_track_off")
+        ok("set_track_off", {"track": target, "off": orig["off"]})
+        check(track_info(target)["off"] == orig["off"], "set_track_off is put back")
+        r = ok("set_automation_type", {"track": target, "type": "write"})
+        check(r is not None and r["automationType"] == "write" and track_info(target)["automationType"] == "write",
+              "set_automation_type")
+        check(fails("set_automation_type", {"track": target, "type": "sometimes"}), "set_automation_type with a wrong type is refused")
+        ok("set_automation_type", {"track": target, "type": orig["automationType"]})
+        if group_a and target == group_a["name"]:
+            r = ok("set_track_channels", {"track": target, "channels": 1})
+            check(r is not None and r["channels"] == 1, "set_track_channels mono")
+            ok("set_track_channels", {"track": target, "channels": orig["channels"]})
+            check(fails("set_track_channels", {"track": target, "channels": 3}), "set_track_channels 3 is refused")
+            check(fails("set_track_monitor", {"track": target, "on": True}), "set_track_monitor of a group is refused")
+    if wave:
+        w0 = track_info(wave[0]["name"])
+        r = ok("set_track_monitor", {"track": wave[0]["name"], "on": not w0["monitorInput"]})
+        check(r is not None and r["monitorInput"] == (not w0["monitorInput"]), "set_track_monitor")
+        ok("set_track_monitor", {"track": wave[0]["name"], "on": w0["monitorInput"]})
     check(fails("set_track_mute", {"track": "no such track", "mute": True}), "set_track_mute with a wrong track is refused")
     if midi:
         check(fails("set_track_volume", {"track": midi["name"], "volume_db": 0}), "set_track_volume needs an audio track")
         r = ok("set_track_mute", {"track": midi["name"], "mute": True})
         check(r is not None and r["mute"] is True, "a midi track can be muted")
         ok("set_track_mute", {"track": midi["name"], "mute": False})
+
+        # Midi mixer strip (a scratch track; its port and channel may be shared, so the values are put back).
+        m0 = track_info(midi["name"])
+        check(m0 is not None and "properties" in m0 and "volume" in m0["controllers"], "get_track of a midi track has properties and controllers")
+        r = ok("set_midi_controller", {"track": midi["name"], "controller": "volume", "value": 90})
+        check(r is not None and r["controller"] == 7 and r["value"] == 90, "set_midi_controller volume")
+        check(wait_for(lambda: track_info(midi["name"])["controllers"]["volume"] == 90), "get_track shows the controller")
+        r = ok("set_midi_controller", {"track": midi["name"], "controller": 10, "value": -20})
+        check(r is not None and r["name"] == "Pan" and r["value"] == -20, "set_midi_controller by number (pan)")
+        check(fails("set_midi_controller", {"track": midi["name"], "controller": "pan", "value": 100}), "a value out of range is refused")
+        check(fails("set_midi_controller", {"track": midi["name"], "controller": "loudness", "value": 1}), "a wrong controller is refused")
+        check(fails("set_midi_controller", {"track": audio[0]["name"] if audio else "x", "controller": "volume", "value": 1}),
+              "set_midi_controller of an audio track is refused")
+        for name, num in (("volume", 7), ("pan", 10)):
+            v = m0["controllers"][name]
+            ok("set_midi_controller", {"track": midi["name"], "controller": num} | ({"off": True} if v is None else {"value": v}))
+        check(wait_for(lambda: track_info(midi["name"])["controllers"]["volume"] == m0["controllers"]["volume"]), "the controllers are put back")
+        r = ok("set_midi_track_properties", {"track": midi["name"], "transpose": 12, "velocity": -10, "length_percent": 150})
+        check(r is not None and r["properties"]["transpose"] == 12 and r["properties"]["velocity"] == -10 and
+              r["properties"]["lengthPercent"] == 150, "set_midi_track_properties")
+        check(fails("set_midi_track_properties", {"track": midi["name"], "delay": 5000}), "a property out of range is refused")
+        check(fails("set_midi_track_properties", {"track": midi["name"]}), "set_midi_track_properties needs a property")
+        p0 = m0["properties"]
+        ok("set_midi_track_properties", {"track": midi["name"], "transpose": p0["transpose"], "velocity": p0["velocity"],
+                                         "length_percent": p0["lengthPercent"]})
+        r = ok("set_track_monitor", {"track": midi["name"], "on": not m0["monitorInput"]})
+        check(r is not None and r["monitorInput"] == (not m0["monitorInput"]), "set_track_monitor of a midi track")
+        ok("set_track_monitor", {"track": midi["name"], "on": m0["monitorInput"]})
 
     # Transport and position. Not while something is playing: Do not disturb.
     tp = result("get_transport")[0]
@@ -786,6 +860,34 @@ if has_edit and group_a:
                 ok("undo")
                 t = track_info(group_a["name"])
                 check(t is not None and any(e["slot"] == 2 for e in t["effects"]), "undo brings the plugin back")
+        # Moving plugins in the rack and to another track.
+        t0 = track_info(group_a["name"])
+        if t0 and t0["effects"]:
+            s0 = t0["effects"][0]["slot"]
+            pname = t0["effects"][0]["name"]
+            r = ok("move_plugin", {"track": group_a["name"], "slot": s0, "to_slot": 5})
+            check(r is not None and r["slot"] == 5 and r["plugin"] == pname, "move_plugin to an empty slot")
+            t1 = track_info(group_a["name"])
+            check([e["slot"] for e in t1["effects"] if e["name"] == pname] == [5] and len(t1["effects"]) == len(t0["effects"]),
+                  "the plugin is in the new slot only")
+            ok("add_plugin", spec | {"slot": 6})
+            r = ok("move_plugin", {"track": group_a["name"], "slot": 5, "to_slot": 6})
+            check(r is not None and r["slot"] == 6 and r["plugin"] == pname, "move_plugin onto a plugin of the same track swaps them")
+            check(fails("move_plugin", {"track": group_a["name"], "slot": 9, "to_slot": 1}), "move_plugin from an empty slot is refused")
+            check(fails("move_plugin", {"track": group_a["name"], "slot": 6, "to_slot": 6}), "move_plugin to the same slot is refused")
+            ok("undo")
+            t2 = track_info(group_a["name"])
+            check(any(e["slot"] == 5 and e["name"] == pname for e in t2["effects"]), "undo of move_plugin")
+            if group_b:
+                ok("add_plugin", spec | {"track": group_b["name"], "slot": 1})
+                check(fails("move_plugin", {"track": group_a["name"], "slot": 5, "to_slot": 1, "to_track": group_b["name"]}),
+                      "move_plugin onto a plugin of another track needs replace")
+                r = ok("move_plugin", {"track": group_a["name"], "slot": 5, "to_slot": 2, "to_track": group_b["name"]})
+                check(r is not None and r["track"] == group_b["name"] and r["slot"] == 2, "move_plugin to another track")
+                tb = track_info(group_b["name"])
+                ta = track_info(group_a["name"])
+                check(any(e["slot"] == 2 and e["name"] == pname for e in tb["effects"]) and
+                      not any(e["slot"] == 5 for e in ta["effects"]), "the plugin has moved to the other track")
     else:
         print("      no suitable effect plugin found, the plugin tests are skipped")
 
@@ -914,6 +1016,28 @@ if has_danger:
             check(fails("cancel_export"), "cancel_export without a running export is refused")
     elif outs:
         check(False, "export_mixdown: %s" % json.dumps(err)[:200])
+    # Mixer configuration, saved and loaded in the scratch folder.
+    r, err = result("save_mixer_config", {"path": exp_rel + "/mixer"})
+    if r is not None:
+        check(r["path"].endswith("/mixer.med_mixer_config") and os.path.exists(r["path"]), "save_mixer_config")
+        check(fails("save_mixer_config", {"path": exp_rel + "/mixer"}), "save_mixer_config does not replace a file")
+        check(ok("save_mixer_config", {"path": exp_rel + "/mixer", "overwrite": True}) is not None, "save_mixer_config with overwrite")
+        r = ok("load_mixer_config", {"path": exp_rel + "/mixer.med_mixer_config", "dry_run": True})
+        check(r is not None and r["dryRun"] and r["tracksMatched"] >= 1 and r["items"] and not r["unmatchedTracks"],
+              "load_mixer_config dry_run (%s matched)" % (r["tracksMatched"] if r else None))
+        r = ok("load_mixer_config", {"path": exp_rel + "/mixer.med_mixer_config", "categories": ["fader", "flags"]})
+        check(r is not None and not r["dryRun"] and r["deviations"] == 0 and
+              all(i["what"] in ("Fader, pan and gain", "Mute, solo and off", "Channels") for i in r["items"]),
+              "load_mixer_config of the faders and flags (%s done)" % (r["done"] if r else None))
+        check(fails("load_mixer_config", {"path": exp_rel + "/mixer.med_mixer_config", "categories": ["everything"]}),
+              "load_mixer_config with a wrong category is refused")
+        check(fails("load_mixer_config", {"path": "../" + exp_rel + "/mixer.med_mixer_config"}),
+              "load_mixer_config outside the project is refused")
+        check(fails("load_mixer_config", {"path": exp_rel + "/missing.med_mixer_config"}), "load_mixer_config of a missing file is refused")
+    elif err and "project folder" in json.dumps(err):
+        print("      the song has not been saved, the mixer configuration tests are skipped")
+    else:
+        check(False, "save_mixer_config: %s" % json.dumps(err)[:200])
     shutil.rmtree(exp_root, ignore_errors=True)
     check(not os.path.exists(exp_root), "the export folder is removed")
 
